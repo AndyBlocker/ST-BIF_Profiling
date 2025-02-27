@@ -1,5 +1,3 @@
-# test_snn.py
-
 import torch
 import pytest
 from ifneuron_models import OriginalIFNeuron, OptimizedIFNeuron, CudaIFNeuron
@@ -59,35 +57,22 @@ def test_neuron_equivalence(ModelClass, timesteps, sparsity):
     """
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    # 神经元参数
     q_threshold = 0.01
     level = torch.tensor(16, dtype=torch.int32)
     sym = False
 
-    # 实例化两个模型
     model_ref = OriginalIFNeuron(q_threshold, level, sym=sym).to(device)
     model_test = ModelClass(q_threshold, level, sym=sym).to(device)
 
-    # 输入参数
     batch_size = 128
     num_features = 128
 
-    # 构造多步稀疏输入
     inputs_seq = build_sparse_inputs(batch_size, num_features, timesteps=timesteps, sparsity=sparsity, device=device)
 
-    # 跑一遍序列，记录每个模型在每个 timestep 的状态
     states_ref = run_model_sequence_and_collect_states(model_ref, inputs_seq)
     states_test = run_model_sequence_and_collect_states(model_test, inputs_seq)
 
-    # 比较每个 timestep 下的状态
     for t in range(timesteps):
         assert_states_close(states_ref[t], states_test[t], rtol=1e-5, atol=1e-7)
 
-    # 如果都通过，则认为两者等效
     print(f"{ModelClass.__name__} is equivalent to OriginalIFNeuron on {timesteps} timesteps input.")
-
-
-if __name__ == "__main__":
-    # 如果不用 pytest 命令行，可以直接在 main 中手动执行
-    # 但推荐使用: pytest test_snn.py
-    pytest.main([__file__])

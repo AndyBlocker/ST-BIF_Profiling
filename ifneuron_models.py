@@ -262,7 +262,7 @@ class CudaIFNeuron(nn.Module):
 
             self.q = q_new
             self.acc_q = acc_q_new
-            self.cur_output = tmp_spike  # tmp_spike 已经乘过阈值
+            self.cur_output = tmp_spike 
 
             # 是否工作判断
             with nvtx.range("Check If Working"):

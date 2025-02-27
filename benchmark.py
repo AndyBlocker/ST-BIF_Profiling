@@ -207,12 +207,10 @@ if __name__ == "__main__":
     sparsity = 0.1
     timesteps = 16
 
-    # 构建三种模型
     original_model = OriginalIFNeuron(q_threshold, level, sym=sym).to(device)
     optimized_model = OptimizedIFNeuron(q_threshold, level, sym=sym).to(device)
     cuda_model = CudaIFNeuron(q_threshold, level, sym=sym).to(device)
 
-    # =============== Benchmark（原有功能） ===============
     input_tensor = build_sparse_inputs(batch_size, num_features, timesteps=1, sparsity=sparsity, device=device)[0]
     t_orig_1 = benchmark_single_step(original_model, input_tensor, repeat=10)
     t_opt_1 = benchmark_single_step(optimized_model, input_tensor, repeat=10)
@@ -234,7 +232,6 @@ if __name__ == "__main__":
     print(f"OptimizedIFNeuron(seq): {t_opt_seq*1e3:.3f} ms for {timesteps} steps")
     print(f"CudaIFNeuron(seq):     {t_cuda_seq*1e3:.3f} ms for {timesteps} steps")
 
-    # =============== Profile + 文本输出 ===============
     profile_log = []
 
     # (1) OriginalIF
