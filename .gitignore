@@ -1,5 +1,7 @@
-# PyTorch model files
+# PyTorch model files - exclude all except required checkpoints
 *.pth
+!best_ANN.pth
+!best_QANN.pth
 
 # Python cache
 __pycache__/
