@@ -1,8 +1,0 @@
-=== GPU Kernel Details ===
-Profiling Date: 2025年 06月 03日 星期二 15:39:07 CST
-
-Top GPU kernels by duration:
-Duration(ns),Kernel_Name
-
-SNN-specific kernels (ST-BIF related):
-No SNN-specific kernels found

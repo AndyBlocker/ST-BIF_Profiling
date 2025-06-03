@@ -13,3 +13,6 @@ __pycache__/
 
 # Output directories
 output_*/
+
+# ST-BIF Profiling outputs (large files)
+profile/outputs/
