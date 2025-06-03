@@ -9,7 +9,7 @@ __pycache__/
 *.pyo
 
 # Checkpoints directory
-checkpoints/
+# checkpoints/
 
 # Output directories
 output_*/
