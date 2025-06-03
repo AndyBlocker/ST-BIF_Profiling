@@ -20,18 +20,20 @@
 
 ```
 ST-BIF_Profiling/
-├── layer/snn/              # 核心SNN层和神经元
+├── snn/                    # 核心SNN框架
 │   ├── neurons/            # ST-BIF和IF神经元实现
 │   │   ├── if_neurons.py   # 标准IF神经元
 │   │   └── st_bif_neurons.py # ST-BIF神经元
-│   └── layers/             # SNN专用层
-│       ├── quantization.py # 量化层
-│       ├── conv.py         # 脉冲卷积层
-│       ├── linear.py       # 脉冲全连接层
-│       ├── normalization.py # 脉冲归一化层
-│       └── pooling.py      # 脉冲池化层
-├── conversion/             # 模型转换工具
-│   └── quantization.py    # ANN→QANN转换函数
+│   ├── layers/             # SNN专用层
+│   │   ├── quantization.py # 量化层
+│   │   ├── conv.py         # 脉冲卷积层
+│   │   ├── linear.py       # 脉冲全连接层
+│   │   ├── normalization.py # 脉冲归一化层
+│   │   └── pooling.py      # 脉冲池化层
+│   └── conversion/         # 模型转换工具
+│       └── quantization.py # ANN→QANN转换函数
+├── models/                 # 神经网络模型
+│   └── resnet.py          # ResNet实现
 ├── wrapper/                # SNN包装器
 │   ├── snn_wrapper.py      # 主要SNN包装类
 │   ├── encoding.py         # 时间编码工具
@@ -42,12 +44,10 @@ ST-BIF_Profiling/
 │   ├── functions.py        # 通用功能函数
 │   ├── io.py              # 输入输出工具
 │   └── misc.py            # 杂项工具
-├── model/                  # 神经网络模型
-│   └── resnet.py          # ResNet实现
-├── checkpoints/           # 预训练模型
-│   └── resnet/            # ResNet检查点
 ├── examples/              # 使用示例
 │   └── ann_to_snn_conversion.py # 完整转换示例
+├── checkpoints/           # 预训练模型
+│   └── resnet/            # ResNet检查点
 ├── legacy/                # 原始实现（只读）
 │   ├── spike_quan_layer.py
 │   └── spike_quan_wrapper_ICML.py
@@ -74,7 +74,7 @@ ST-BIF_Profiling/
 ## 核心组件
 
 ### ST-BIF神经元
-- **位置**: `layer/snn/neurons/st_bif_neurons.py`
+- **位置**: `snn/neurons/st_bif_neurons.py`
 - **特点**: 
   - 可学习阈值
   - 分叉动力学
@@ -83,7 +83,7 @@ ST-BIF_Profiling/
 
 ### 模型转换
 ```python
-from conversion import myquan_replace_resnet
+from snn.conversion import myquan_replace_resnet
 from wrapper import SNNWrapper_MS
 
 # ANN → QANN

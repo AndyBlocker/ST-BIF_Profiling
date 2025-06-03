@@ -27,13 +27,13 @@ from torchvision import datasets, transforms
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import modular SNN framework components
-from conversion import myquan_replace_resnet
+from snn.conversion import myquan_replace_resnet
 from wrapper import SNNWrapper_MS
-from model import resnet
+from models import resnet
 
 # Import for backward compatibility verification
 try:
-    from layer.snn import ST_BIFNeuron_MS, MyQuan, LLConv2d_MS, LLLinear_MS
+    from snn import ST_BIFNeuron_MS, MyQuan, LLConv2d_MS, LLLinear_MS
     BACKWARD_COMPAT = True
 except ImportError as e:
     print(f"⚠️  Some components not available: {e}")

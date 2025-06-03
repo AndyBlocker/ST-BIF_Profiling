@@ -6,7 +6,7 @@ standard precision to quantized precision (ANN -> QANN).
 """
 
 import torch.nn as nn
-from layer.snn.layers.quantization import MyQuan, QuanConv2d, QuanLinear
+from snn.layers.quantization import MyQuan, QuanConv2d, QuanLinear
 
 
 def myquan_replace_resnet(model, level, weight_bit=32, is_softmax=True):

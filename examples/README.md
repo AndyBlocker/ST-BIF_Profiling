@@ -61,8 +61,8 @@ The examples demonstrate the modular architecture:
 
 ```
 ST-BIF_Profiling/
-├── layer/snn/          # Core SNN layers and neurons
-├── conversion/         # Model conversion utilities (ANN→QANN→SNN)
+├── snn/               # Core SNN framework (neurons, layers, conversion)
+├── models/            # Neural network models
 ├── wrapper/           # SNN wrapper classes
 ├── utils/             # Framework utilities
 └── examples/          # Usage examples (this directory)
@@ -80,7 +80,7 @@ If these files are not available, the examples will attempt to convert from the 
 
 ### 1. Model Conversion
 ```python
-from conversion import myquan_replace_resnet
+from snn.conversion import myquan_replace_resnet
 from wrapper import SNNWrapper_MS
 
 # Convert ANN to QANN

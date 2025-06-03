@@ -12,8 +12,8 @@ import os
 from copy import deepcopy
 
 # Import SNN components
-from layer.snn.neurons import ST_BIFNeuron_MS, IFNeuron, ORIIFNeuron
-from layer.snn.layers import (
+from snn.neurons import ST_BIFNeuron_MS, IFNeuron, ORIIFNeuron
+from snn.layers import (
     MyQuan, LLConv2d_MS, LLLinear_MS, QuanConv2d, QuanLinear,
     SpikingBatchNorm2d_MS, MyBatchNorm1d, Spiking_LayerNorm,
     SpikeMaxPooling_MS, QAttention, SAttention, QWindowAttention, SWindowAttention

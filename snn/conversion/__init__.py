@@ -9,5 +9,5 @@ from .quantization import myquan_replace_resnet
 
 # Export all conversion functions
 __all__ = [
-    'myquan_replace_resnet'
+    "myquan_replace_resnet"
 ]

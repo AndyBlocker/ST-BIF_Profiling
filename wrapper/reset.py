@@ -5,7 +5,7 @@ This module contains functions for resetting neuron states
 in SNN models between inference steps.
 """
 
-from layer.snn.neurons import ST_BIFNeuron_MS, IFNeuron
+from snn.neurons import ST_BIFNeuron_MS, IFNeuron
 
 
 def reset_model(wrapper):
