@@ -68,11 +68,11 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
              batch_size, time_steps, features_flat)
         )
         
-        # Convert back to PyTorch
-        spike_seq = from_dlpack(spike_seq_cp.toDlpack())
-        v = from_dlpack(v_out_cp.toDlpack())
-        T_seq = from_dlpack(T_seq_cp.toDlpack())
-        H_seq = from_dlpack(H_seq_cp.toDlpack())
+        # Convert back to PyTorch - create fresh copies to avoid capsule reuse
+        spike_seq = spike_seq_out.clone()
+        v = v_out.clone()
+        T_seq = T_seq_out.clone()
+        H_seq = H_seq_out.clone()
         
         # print("ST_BIFNodeATGF_MS_CUDA:", spike_seq.dtype, H_seq.dtype, T_seq.dtype, x_seq.dtype, v_th.dtype, T_max.dtype, T_min.dtype)
 
@@ -120,8 +120,8 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
              batch_size, time_steps, features_flat)
         )
         
-        # Convert back to PyTorch
-        grad_x = from_dlpack(grad_x_seq_cp.toDlpack())
+        # Convert back to PyTorch - use original tensor to avoid capsule reuse
+        grad_x = grad_x_seq.clone()
         
         # print("ST_BIFNodeATGF_MS_CUDA Backward:", grad_x_seq.dtype, grad_v_cp.dtype, grad_T_seq_cp.dtype, spike_seq_cp.dtype, spike_seq.dtype, H_seq.dtype, T_seq.dtype, v_th.dtype, T_max.dtype, T_min.dtype)
 
