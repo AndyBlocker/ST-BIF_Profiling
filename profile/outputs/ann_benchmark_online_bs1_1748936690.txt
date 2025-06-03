@@ -1,0 +1,19 @@
+=== ANN Throughput Benchmark ===
+Scenario: online
+Configuration:
+  Batch Size: 1
+  Device: cuda
+  Mode: Inference
+
+Timing Results (ms):
+  Average total time: 0.72
+  Average forward time: 0.72
+  Average backward time: 0.00 (inference mode)
+
+Throughput:
+  Samples/sec: 1386.96
+  Steps/sec: 1386.96
+
+Performance Ratios:
+  Forward/Total: 100.0%
+  Backward/Total: 0.0% (inference mode)

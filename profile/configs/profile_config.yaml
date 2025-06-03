@@ -1,0 +1,88 @@
+# ST-BIF SNN Profiling Configuration
+# This file contains default configurations for different profiling scenarios
+
+# Default profiling parameters
+default:
+  batch_size: 32
+  time_steps: 8
+  quantization_level: 8
+  warmup_steps: 20
+  profiling_steps: 100
+  device: "cuda"
+
+# Quick profiling for rapid iteration
+quick:
+  batch_size: 16
+  time_steps: 4
+  quantization_level: 8
+  warmup_steps: 10
+  profiling_steps: 50
+  device: "cuda"
+
+# Thorough profiling for detailed analysis
+thorough:
+  batch_size: 64
+  time_steps: 8
+  quantization_level: 8
+  warmup_steps: 50
+  profiling_steps: 200
+  device: "cuda"
+
+# Memory-focused profiling
+memory_focused:
+  batch_size: 128
+  time_steps: 8
+  quantization_level: 8
+  warmup_steps: 20
+  profiling_steps: 100
+  device: "cuda"
+
+# CPU profiling configuration
+cpu_profiling:
+  batch_size: 8
+  time_steps: 4
+  quantization_level: 8
+  warmup_steps: 10
+  profiling_steps: 50
+  device: "cpu"
+
+# Kernel-specific profiling for NCU
+kernel_focused:
+  batch_size: 16
+  time_steps: 8
+  quantization_level: 8
+  warmup_steps: 10
+  profiling_steps: 20  # Fewer steps for detailed kernel analysis
+  device: "cuda"
+
+# PyTorch profiler specific settings
+torch_profiler:
+  record_shapes: true
+  profile_memory: true
+  with_stack: true
+  with_flops: true
+  activities: ["cpu", "cuda"]
+
+# Nsight Systems specific settings
+nsys:
+  trace: ["cuda", "nvtx", "osrt", "cudnn", "cublas"]
+  cuda_memory_usage: true
+  export_format: "sqlite"
+
+# Nsight Compute specific settings
+ncu:
+  metric_set: "full"
+  kernel_regex: ".*"  # Profile all kernels
+  launch_count: 10    # Number of kernel launches to capture
+  target_processes: "application-only"
+
+# Model paths
+model_paths:
+  ann_model: "checkpoints/resnet/best_ANN.pth"
+  qann_model: "checkpoints/resnet/best_QANN.pth"
+
+# Output configuration
+output:
+  base_directory: "profile/outputs"
+  include_timestamp: true
+  generate_summary: true

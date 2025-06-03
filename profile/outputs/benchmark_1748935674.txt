@@ -1,0 +1,15 @@
+=== SNN Throughput Benchmark ===
+
+Configuration:
+  Batch Size: 16
+  Time Steps: 8
+  Device: cuda
+
+Timing Results (ms):
+  Average total time: 74.18
+  Average forward time: 7.97
+  Average backward time: 66.22
+
+Throughput:
+  Samples/sec: 215.68
+  Steps/sec: 13.48

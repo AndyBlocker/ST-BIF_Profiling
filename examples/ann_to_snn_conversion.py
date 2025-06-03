@@ -23,11 +23,14 @@ import time
 import torch
 from torchvision import datasets, transforms
 
+
 # Add project root to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import modular SNN framework components
 from snn.conversion import myquan_replace_resnet
+from snn.optimization_utils import setup_optimizations
+from snn.optimization_utils_fixed import setup_st_bif_optimizations
 from wrapper import SNNWrapper_MS
 from models import resnet
 
@@ -226,6 +229,12 @@ def run_conversion_pipeline(test_loader, ann_model_path="checkpoints/resnet/best
     if verbose:
         print("  🔧 Creating SNN wrapper with ST-BIF neurons...")
     
+    # setup_optimizations()
+#     optimizer = setup_st_bif_optimizations(
+#       enable_memory_pool=True,
+#       enable_tf32=True,
+#       enable_cudnn_benchmark=False  # 对变长输入更安全
+#   )
     # Create SNN using the modular SNNWrapper_MS
     snn_model = SNNWrapper_MS(
         ann_model=qann_model,  # Use the quantized model as base

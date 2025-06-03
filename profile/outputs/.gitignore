@@ -1,0 +1,8 @@
+# Ignore large profiling output files
+*.json
+*.nsys-rep
+*.sqlite
+
+# Keep text reports and analysis
+!*.txt
+!*.md
