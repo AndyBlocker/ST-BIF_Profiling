@@ -82,17 +82,19 @@ class ST_BIFNeuron_SS(nn.Module):
         super(ST_BIFNeuron_SS, self).__init__()
         self.q = 0.0
         self.acc_q = 0.0
-        self.q_threshold = nn.Parameter(torch.tensor(q_threshold),requires_grad=False)
-        self.level = torch.tensor(level)
+        self.q_threshold = nn.Parameter(q_threshold.clone().detach() if isinstance(q_threshold, torch.Tensor) else torch.tensor(q_threshold),requires_grad=False)
+        self.level = level.clone().detach() if isinstance(level, torch.Tensor) else torch.tensor(level)
         self.T = self.level//2 - 1
         self.sym = sym
         if sym:
-            self.register_buffer("pos_max",torch.tensor(level//2 - 1))
-            self.register_buffer("neg_min",torch.tensor(-level//2 + 1))
+            level_val = level.item() if isinstance(level, torch.Tensor) else level
+            self.register_buffer("pos_max",torch.tensor(level_val//2 - 1))
+            self.register_buffer("neg_min",torch.tensor(-level_val//2 + 1))
             # self.pos_max = torch.tensor(level//2 - 1)
             # self.neg_min = torch.tensor(-level//2)
         else:
-            self.register_buffer("pos_max",torch.tensor(level - 1))
+            level_val = level.item() if isinstance(level, torch.Tensor) else level
+            self.register_buffer("pos_max",torch.tensor(level_val - 1))
             self.register_buffer("neg_min",torch.tensor(0))
             # self.pos_max = torch.tensor(level - 1)
             # self.neg_min = torch.tensor(0)
@@ -228,16 +230,18 @@ class ST_BIFNeuron_MS(nn.Module):
         #     self.dim = 197
         #     self.time_allocator = nn.Parameter(torch.ones(self.T - 1, 1, 1, 1),requires_grad=True)
 
-        self.q_threshold = nn.Parameter(torch.tensor(q_threshold),requires_grad=False)
-        self.level = torch.tensor(level)
+        self.q_threshold = nn.Parameter(q_threshold.clone().detach() if isinstance(q_threshold, torch.Tensor) else torch.tensor(q_threshold),requires_grad=False)
+        self.level = level.clone().detach() if isinstance(level, torch.Tensor) else torch.tensor(level)
         self.sym = sym
         if sym:
-            self.register_buffer("pos_max",torch.tensor(level//2 - 1))
-            self.register_buffer("neg_min",torch.tensor(-level//2 - 1))
+            level_val = level.item() if isinstance(level, torch.Tensor) else level
+            self.register_buffer("pos_max",torch.tensor(level_val//2 - 1))
+            self.register_buffer("neg_min",torch.tensor(-level_val//2 - 1))
             # self.pos_max = torch.tensor(level//2 - 1)
             # self.neg_min = torch.tensor(-level//2)
         else:
-            self.register_buffer("pos_max",torch.tensor(level - 1))
+            level_val = level.item() if isinstance(level, torch.Tensor) else level
+            self.register_buffer("pos_max",torch.tensor(level_val - 1))
             self.register_buffer("neg_min",torch.tensor(0))
             # self.pos_max = torch.tensor(level - 1)
             # self.neg_min = torch.tensor(0)

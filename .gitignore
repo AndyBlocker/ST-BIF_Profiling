@@ -16,3 +16,14 @@ output_*/
 
 # ST-BIF Profiling outputs (large files)
 profile/outputs/
+
+# NSYS profiling files
+*.nsys-rep
+*.qdrep
+*.qdstrm
+nsys_profiling_results_*.json
+nsys_profiling_summary_*.txt
+snn_profile_*
+
+# Temporary profiling files
+/tmp/nsys-report-*
