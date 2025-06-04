@@ -21,6 +21,8 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
             ST_BIFNodeATGF_MS_CUDA.backward_kernel_fp32 = module.get_function('backward_kernel_fp32')
             ST_BIFNodeATGF_MS_CUDA.forward_kernel_fp16 = module.get_function('forward_kernel_fp16')
             ST_BIFNodeATGF_MS_CUDA.backward_kernel_fp16 = module.get_function('backward_kernel_fp16')
+            ST_BIFNodeATGF_MS_CUDA.forward_kernel_fp64 = module.get_function('forward_kernel_fp64')
+            ST_BIFNodeATGF_MS_CUDA.backward_kernel_fp64 = module.get_function('backward_kernel_fp64')
 
     @staticmethod
     def forward(ctx, x_seq: torch.Tensor, v_th: torch.Tensor, T_max: torch.Tensor, T_min: torch.Tensor, prefire: torch.Tensor):
@@ -31,12 +33,21 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
         features_flat = torch.prod(torch.tensor(features)).item()
         
         # Determine precision
+        is_double = x_seq.dtype == torch.float64
         is_half = x_seq.dtype == torch.float16
-        forward_kernel = ST_BIFNodeATGF_MS_CUDA.forward_kernel_fp16 if is_half else ST_BIFNodeATGF_MS_CUDA.forward_kernel_fp32
-        if is_half:
+        
+        if is_double:
+            forward_kernel = ST_BIFNodeATGF_MS_CUDA.forward_kernel_fp64
+            v_th = v_th.type(torch.float64)
+            T_max = T_max.type(torch.float64)
+            T_min = T_min.type(torch.float64)
+        elif is_half:
+            forward_kernel = ST_BIFNodeATGF_MS_CUDA.forward_kernel_fp16
             v_th = v_th.type(torch.float16)
             T_max = T_max.type(torch.float16)
             T_min = T_min.type(torch.float16)
+        else:  # Default to fp32
+            forward_kernel = ST_BIFNodeATGF_MS_CUDA.forward_kernel_fp32
         
         # Prepare output tensors with same dtype as input
         spike_seq_out = torch.zeros((time_steps + 1, batch_size, *features), 
@@ -77,6 +88,7 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
         # print("ST_BIFNodeATGF_MS_CUDA:", spike_seq.dtype, H_seq.dtype, T_seq.dtype, x_seq.dtype, v_th.dtype, T_max.dtype, T_min.dtype)
 
         ctx.save_for_backward(spike_seq, T_seq, H_seq, v_th, T_max, T_min)
+        ctx.is_double = is_double
         ctx.is_half = is_half
         
         return spike_seq[1:], v, T_seq[1:]
@@ -84,9 +96,15 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_spike_seq: torch.Tensor, grad_v: torch.Tensor, grad_T_seq: torch.Tensor):
         spike_seq, T_seq, H_seq, v_th, T_max, T_min = ctx.saved_tensors
+        is_double = ctx.is_double
         is_half = ctx.is_half
         
-        backward_kernel = ST_BIFNodeATGF_MS_CUDA.backward_kernel_fp16 if is_half else ST_BIFNodeATGF_MS_CUDA.backward_kernel_fp32
+        if is_double:
+            backward_kernel = ST_BIFNodeATGF_MS_CUDA.backward_kernel_fp64
+        elif is_half:
+            backward_kernel = ST_BIFNodeATGF_MS_CUDA.backward_kernel_fp16
+        else:
+            backward_kernel = ST_BIFNodeATGF_MS_CUDA.backward_kernel_fp32
         
         time_steps = grad_spike_seq.shape[0]
         batch_size = grad_spike_seq.shape[1]

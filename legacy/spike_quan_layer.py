@@ -11,6 +11,8 @@ from neuron_cupy.cuda_operator import ST_BIFNodeATGF_MS_CUDA
 from timm.models.layers.helpers import to_2tuple
 from typing import Optional
 from timm.models.layers import trunc_normal_
+from torch import Tensor
+from einops import rearrange
 
 # torch.set_default_dtype(torch.double)
 # torch.set_default_tensor_type(torch.DoubleTensor)
@@ -361,7 +363,6 @@ class ST_BIFNeuron_MS(nn.Module):
         self.register_buffer("prefire",torch.tensor(0.0))
         self.init = True
         self.eps = 0
-        self.spike_count = 0
 
     # def __repr__(self):
     #         return f"ST_BIFNeuron_MS(level={self.level}, sym={self.sym}, pos_max={self.pos_max}, neg_min={self.neg_min}, q_threshold={self.q_threshold})"
@@ -379,23 +380,31 @@ class ST_BIFNeuron_MS(nn.Module):
         input = input.reshape(torch.Size([int((self.T)),N//int((self.T))]) + input.shape[1:])
         # print("ST_BIFNeuron_MS input.sum(dim=0).abs().mean()",input.sum(dim=0).abs().mean(),input.dtype)
         
+        # time_allocator = torch.cat([self.T - torch.sum(self.time_allocator,dim=0,keepdim=True), self.time_allocator], dim=0)
+        # if len(input.shape) == 5 and not self.first_neuron:
+        #     time_allocator = time_allocator.unsqueeze(1)
+        # input = time_allocator * input
+
+        # print("time_allocator",time_allocator.reshape(-1))
+        # print(time_allocator.requires_grad, self.q_threshold.requires_grad)
+        # print("time_allocator",input.shape, time_allocator.shape)
+        # s_grad_scale = 1.0 / (((input.sum(dim=0)).detach().abs().mean() * input.numel()) ** 0.5)
+    
+        # if self.init:
+        #     self.q_threshold.data = (((input.sum(dim=0)).detach().abs().mean() * 2) / (self.pos_max.detach().abs() ** 0.5))
+        #     print(self.q_threshold.data)
+        #     self.init = False
+
         # s_scale = grad_scale(self.q_threshold, s_grad_scale)
         # print("self.q_threshold",self.q_threshold.item())
         spike_seq, v, T_seq = ST_BIFNodeATGF_MS_CUDA.apply(input.flatten(2), self.q_threshold, self.pos_max, self.neg_min, self.prefire)
         # self.q = v
         # print(self.q[self.q>0].mean())
-        
-        # calc spike rate over time
-        # spike rate = spike count / input size = "non zero" in spike_seq
-        
         if self.need_spike_tracer:
             self.acc_q = T_seq.reshape(ori_shape)
         # print("ST_BIFNeuron_MS output.sum(dim=0).abs().mean()",(spike_seq*self.q_threshold).sum(dim=0).abs().mean(),spike_seq.dtype)
         if self.suppress_over_fire:
             self.overfireLoss = ((spike_seq.abs().sum(dim=0) - spike_seq.sum(dim=0).abs())).sum() / spike_seq.numel()
-        
-        self.spike_count = spike_seq.abs().sum(dim=0).sum()
-        
         return spike_seq.reshape(ori_shape)*self.q_threshold
 
 
@@ -664,6 +673,45 @@ class Spiking_LayerNorm(nn.Module):
         # output = torch.diff(output,dim=0,prepend=(output[0]*0.0).unsqueeze(0))
         # return output.reshape(ori_shape)
 
+class spiking_dyt(nn.Module):
+    def __init__(self,dyt,step,T):
+        super(spiking_dyt, self).__init__()
+        self.X = 0.0
+        # self.gamma = dyt.gamma
+        self.beta = torch.nn.Parameter(dyt.beta, requires_grad=False)
+        # self.alpha = dyt.alpha
+        self.dyt = dyt
+        # self.dyt.beta.data = self.dyt.beta * 0.0
+        # self.dyt.beta.requires_grad = False
+        # self.dyt.gamma.requires_grad = False
+        # self.dyt.alpha.requires_grad = False
+        self.step = step
+        self.t = 0
+        self.T = T
+        # self.divide = torch.tensor([min(1.0,1.0*(i+1)/self.step) for i in range(self.T)])
+        # print(self.divide)
+    
+    def reset(self):
+        # print("spiking_softmax reset")
+        self.X = 0.0
+        self.t = 0
+    
+    def forward(self,input):
+        # ori_shape = input.shape
+        # input = input.reshape(torch.Size([self.T, input.shape[0]//self.T]) + input.shape[1:])
+        # self.X = torch.cumsum(input, dim=0) - input
+        # Y = self.gamma * torch.sinh(self.alpha * input) / (torch.cosh(self.alpha*self.X) * torch.cosh(self.alpha*(input + self.X))) + self.beta/self.T
+        # return Y.reshape(ori_shape)
+        ori_shape = input.shape
+        input = input.reshape(torch.Size([self.T, input.shape[0]//self.T]) + input.shape[1:])
+        input = torch.cumsum(input, dim=0)
+        output = self.dyt(input)
+        output = torch.diff(output,dim=0,prepend=(output[0]*0.0).unsqueeze(0))
+        # output[:self.step] = output[:self.step] + self.beta/self.step
+        return output.reshape(ori_shape)
+        
+        
+
 
 class spiking_softmax(nn.Module):
     def __init__(self,step,T):
@@ -814,13 +862,14 @@ class MyQuan(nn.Module):
                 self.pos_max = torch.tensor(float(level//2 - 1))
                 self.neg_min = torch.tensor(float(0))
 
-        self.s = nn.Parameter(torch.tensor(1.0))
+        self.s = nn.Parameter(torch.tensor(1.0)).to(torch.float32)
         self.batch_init = 20
         self.init_state = 0
         self.debug = False
         self.tfwriter = None
         self.global_step = 0.0
         self.name = "myquan"
+        self.record = True
 
     def __repr__(self):
         return f"MyQuan(level={self.level}, sym={self.sym}, pos_max={self.pos_max}, neg_min={self.neg_min}, s={self.s.data})"
@@ -837,44 +886,53 @@ class MyQuan(nn.Module):
         self.global_step = global_step
 
     def forward(self, x):
-        # print("self.pos_max",self.pos_max)
-        if self.pos_max == 'full':
-            return x
-        # print("self.Q_thr in Quan",self.Q_thr,"self.T:",self.T)
-        # print("MyQuan intput x.abs().mean()",x.abs().mean(),x.dtype)
-        if str(self.neg_min.device) == 'cpu':
-            self.neg_min = self.neg_min.to(x.device)
-        if str(self.pos_max.device) == 'cpu':
-            self.pos_max = self.pos_max.to(x.device)
-        min_val = self.neg_min
-        max_val = self.pos_max
-        # x = F.hardtanh(x, min_val=min_val, max_val=max_val.item())
+        input_detype = x.dtype
+        if input_detype == torch.float16:
+            x = x.to(torch.bfloat16)
+        
+        if self.training and input_detype == torch.float16:
+            with torch.amp.autocast(dtype=torch.bfloat16, device_type='cuda', enabled=True):
+                if self.pos_max == 'full':
+                    return x
+                if str(self.neg_min.device) == 'cpu':
+                    self.neg_min = self.neg_min.to(x.device)
+                if str(self.pos_max.device) == 'cpu':
+                    self.pos_max = self.pos_max.to(x.device)
+                min_val = self.neg_min
+                max_val = self.pos_max
 
-        # according to LSQ, the grad scale should be proportional to sqrt(1/(quantize_state*neuron_number))
-        s_grad_scale = 1.0 / ((max_val.detach().abs().mean() * x.numel()) ** 0.5)
-        # s_grad_scale = s_grad_scale / ((self.level_init)/(self.pos_max))
+                # according to LSQ, the grad scale should be proportional to sqrt(1/(quantize_state*neuron_number))
+                s_grad_scale = 1.0 / ((max_val.detach().abs().mean() * x.numel()) ** 0.5)
 
-        # print("self.init_state",self.init_state)
-        # print("self.init_state<self.batch_init",self.init_state<self.batch_init)
-        # print("self.training",self.training)
-        if self.init_state == 0 and self.training:
-            self.s.data = torch.tensor(x.detach().abs().mean() * 2 / (self.pos_max ** 0.5)).cuda() if self.sym \
-                            else torch.tensor(x.detach().abs().mean() * 4 / (self.pos_max ** 0.5)).cuda()
-            self.init_state += 1
-            return x
-        # elif self.init_state<self.batch_init and self.training:
-        #     self.s.data = 0.9*self.s.data + 0.1*torch.tensor(torch.mean(torch.abs(x.detach()))*2/(math.sqrt(max_val.detach().abs().mean())),dtype=torch.float32)
-        #     self.init_state += 1
-        # print("s_grad_scale",s_grad_scale.item(),"self.s",self.s.data.item())
+                if self.init_state == 0 and self.training:
+                    self.s.data = torch.tensor(x.detach().abs().mean() * 2 / (self.pos_max ** 0.5)).cuda() if self.sym \
+                                    else torch.tensor(x.detach().abs().mean() * 4 / (self.pos_max ** 0.5)).cuda()
+                    self.init_state += 1
+                    return x
 
-        # elif self.init_state==self.batch_init and self.training:
-        #     # self.s = torch.nn.Parameter(self.s)
-        #     self.init_state += 1
-        #     # print("initialize finish!!!!")
-        l2_loss1 = 0
-        s_scale = grad_scale(self.s, s_grad_scale)
-        # s_scale = s_scale * ((self.level_init)/(self.pos_max))
-        output = torch.clamp(floor_pass(x/s_scale + 0.5), min=min_val, max=max_val)*s_scale
+                s_scale = grad_scale(self.s, s_grad_scale)
+                output = torch.clamp(floor_pass(x/s_scale + 0.5), min=min_val, max=max_val)*s_scale
+        else:
+            if self.pos_max == 'full':
+                return x
+            if str(self.neg_min.device) == 'cpu':
+                self.neg_min = self.neg_min.to(x.device)
+            if str(self.pos_max.device) == 'cpu':
+                self.pos_max = self.pos_max.to(x.device)
+            min_val = self.neg_min
+            max_val = self.pos_max
+
+            # according to LSQ, the grad scale should be proportional to sqrt(1/(quantize_state*neuron_number))
+            s_grad_scale = 1.0 / ((max_val.detach().abs().mean() * x.numel()) ** 0.5)
+
+            if self.init_state == 0 and self.training:
+                self.s.data = torch.tensor(x.detach().abs().mean() * 2 / (self.pos_max ** 0.5)).cuda() if self.sym \
+                                else torch.tensor(x.detach().abs().mean() * 4 / (self.pos_max ** 0.5)).cuda()
+                self.init_state += 1
+                return x
+
+            s_scale = grad_scale(self.s, s_grad_scale)
+            output = torch.clamp(floor_pass(x/s_scale + 0.5), min=min_val, max=max_val)*s_scale
 
         if self.debug and self.tfwriter is not None:
             self.tfwriter.add_histogram(tag="before_quan/".format(s_scale.item())+self.name+'_data', values=(x).detach().cpu(), global_step=self.global_step)
@@ -886,6 +944,7 @@ class MyQuan(nn.Module):
             self.name = ""
             self.global_step = 0.0
 
+        output = output.to(input_detype)
         # print("MyQuan output.abs().mean()",output.abs().mean(),output.dtype)
 
         # x_abs = torch.abs(output)/self.s
@@ -893,6 +952,94 @@ class MyQuan(nn.Module):
         # self.absvalue = (torch.abs(output)/self.s).sum()
         # output = floor_pass(x/s_scale)*s_scale
         return output
+
+class QAttention_without_softmax(nn.Module):
+
+    def __init__(
+            self,
+            dim,
+            num_heads=8,
+            qkv_bias=False,
+            qk_norm=False,
+            attn_drop=0.,
+            proj_drop=0.,
+            norm_layer=nn.LayerNorm,
+            level = 2,
+            is_softmax = True,
+    ):
+        super().__init__()
+        assert dim % num_heads == 0, 'dim should be divisible by num_heads'
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
+        self.level = level
+        self.is_softmax = is_softmax
+        self.qkv_bias = qkv_bias
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.quan_q = MyQuan(self.level,sym=False)
+        self.quan_k = MyQuan(self.level,sym=False)
+        self.quan_v = MyQuan(self.level,sym=True)
+        self.relu1 = nn.ReLU6()
+        self.relu2 = nn.ReLU6()
+        # self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        # self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim,bias=True)
+        self.attn_quan = MyQuan(self.level,sym=False)
+        self.proj_drop = nn.Dropout(proj_drop)
+        if self.is_softmax:
+            self.attn_softmax_quan = MyQuan(self.level,sym=True)
+        self.after_attn_quan = MyQuan(self.level,sym=True)
+        self.after_attn_quan.s.data = torch.tensor(0.5)
+        self.feature_quan = MyQuan(self.level,sym=True)
+        self.quan_proj = MyQuan(self.level,sym=True)
+        self.quan_proj.record = False
+        
+        self.dwc = nn.Conv2d(in_channels=self.head_dim, out_channels=self.head_dim, kernel_size=5,
+                        groups=self.head_dim, padding=5 // 2)
+        
+    def forward(self, x):
+        B, N, C = x.shape
+        # print("x.abs().mean()",x.abs().mean())
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv.unbind(0)
+        # q, k = self.q_norm(q), self.k_norm(k)
+        q = self.quan_q(q)
+        k = self.quan_k(k)
+        q = self.relu1(q)
+        k = self.relu2(k)
+        v = self.quan_v(v)
+        # print("q.abs().mean()",q.abs().mean())
+        # print("k.abs().mean()",k.abs().mean())
+        # print("v.abs().mean()",v.abs().mean())
+        # print("q,k,v",q.abs().mean().item(),k.abs().mean().item(),v.abs().mean().item())
+        q = q * self.scale
+        attn = q @ k.transpose(-2, -1)/(q.shape[-1]*36)
+        # if self.training:
+        #     print("attn",attn.abs().mean().item())
+        attn = self.attn_quan(attn)
+        
+        attn = self.attn_drop(attn)
+        x = attn @ v
+        # if self.training:
+        #     print("after_attn",x.abs().mean().item())
+        x = self.after_attn_quan(x)
+        # if self.training:
+        #     print("after_attn_quan",x.abs().mean().item())
+        x = x.transpose(1, 2).reshape(B, N, C)
+
+        classtoken = v[:,:,0,:].unsqueeze(2)
+        feature_map = v[:,:,1:,:].reshape(B*self.num_heads,int(math.sqrt(N-1)),int(math.sqrt(N-1)),self.head_dim).permute(0,3,1,2) # B*H,C,N,N
+        feature_map = torch.cat([classtoken, self.dwc(feature_map).permute(0,2,3,1).reshape(B,self.num_heads,N-1,self.head_dim)],dim=2).transpose(1, 2).reshape(B, N, C)
+        feature_map = self.feature_quan(feature_map)
+        x = self.proj(x+feature_map)
+        # if self.training:
+        #     print("proj",x.abs().mean().item())
+        x = self.proj_drop(x)
+        x = self.quan_proj(x)
+
+        return x
 
 
 class QAttention(nn.Module):
@@ -1268,6 +1415,228 @@ class SAttention(nn.Module):
         return x
 
 
+class SAttention_without_softmax(nn.Module):
+
+    def __init__(
+            self,
+            dim,
+            num_heads=8,
+            qkv_bias=False,
+            qk_norm=False,
+            attn_drop=0.,
+            proj_drop=0.,
+            norm_layer=nn.LayerNorm,
+            neuron_layer = ST_BIFNeuron_MS,
+            level = 2,
+            is_softmax = True,
+            T = 32,
+            
+    ):
+        super().__init__()
+        assert dim % num_heads == 0, 'dim should be divisible by num_heads'
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = (self.head_dim ** -0.5)
+        self.neuron_layer = neuron_layer
+        self.level = level
+        self.is_softmax = is_softmax
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.q_IF = self.neuron_layer(q_threshold=torch.tensor(1.0),level=self.level,sym=False, need_spike_tracer=True)
+        self.k_IF = self.neuron_layer(q_threshold=torch.tensor(1.0),level=self.level,sym=False, need_spike_tracer=True)
+        self.v_IF = self.neuron_layer(q_threshold=torch.tensor(1.0),level=self.level,sym=True, need_spike_tracer=True)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.attn_IF = self.neuron_layer(q_threshold=torch.tensor(1.0),level=self.level,sym=False, need_spike_tracer=not is_softmax)
+        self.after_attn_IF = self.neuron_layer(q_threshold=torch.tensor(1.0),level=self.level,sym=True)
+        self.feature_IF = self.neuron_layer(q_threshold=torch.tensor(1.0),level=self.level,sym=True)
+        self.proj = nn.Linear(dim, dim,bias=True)
+        self.proj_drop = nn.Dropout(proj_drop)
+        self.dwc = nn.Conv2d(in_channels=self.head_dim, out_channels=self.head_dim, kernel_size=5,
+                groups=self.head_dim, padding=5 // 2)
+        self.proj_IF = self.neuron_layer(q_threshold=torch.tensor(1.0),level=self.level,sym=True)
+        self.T = T
+
+        # saving mid feature
+        self.t = 0
+        self.first = False        
+        self.accu_input = []
+        self.accu_qkv = []
+        self.accu_q = []
+        self.accu_k = []
+        self.accu_v = []
+        self.accu_q_scale = []
+        self.accu_q_scale_acc = []
+        self.accu_k_acc = []
+        self.accu_v_acc = []
+        self.accu_qk = []
+        self.accu_qk_softmax = []
+        self.accu_qk_acc = []
+        self.accu_attn = []
+        self.accu_proj_input = []
+        self.accu_proj = []
+        self.accu = []
+        self.accu1 = []
+        self.accu_q_in = None
+        self.accu_k_in = None
+        self.accu_v_in = None
+        self.accu_attn_in = None
+        self.name = ""
+
+    def reset(self):
+        self.q_IF.reset()
+        self.k_IF.reset()
+        self.v_IF.reset()
+        self.attn_IF.reset()
+        self.attn_softmax_IF.reset()
+        self.after_attn_IF.reset()
+        if self.is_softmax:
+            self.Ssoftmax.reset()
+        self.t = 0
+        self.accu_q_in = None
+        self.accu_k_in = None
+        self.accu_v_in = None
+        self.accu_attn_in = None
+
+    def forward(self, x):
+        self.t = self.t + 1
+        B, N, C = x.shape
+        # print("x.abs().mean()",x.reshape(self.T,16,197,384).sum(dim=0).abs().mean())
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4) # 3 B self.num_heads N self.head_dim
+
+        q, k, v = qkv.unbind(0)
+        q = self.q_IF(q)
+        k = self.k_IF(k)
+        v = self.v_IF(v)
+        # print("q.abs().mean()",q.reshape(self.T,16,6,197,64).sum(dim=0).abs().mean())
+        # print("k.abs().mean()",k.reshape(self.T,16,6,197,64).sum(dim=0).abs().mean())
+        # print("v.abs().mean()",v.reshape(self.T,16,6,197,64).sum(dim=0).abs().mean())
+                        
+        q = q * self.scale
+        q_acc = self.q_IF.acc_q * self.scale * self.q_IF.q_threshold
+
+        attn = multi(q,k,q_acc - q.detach(),self.k_IF.acc_q*self.k_IF.q_threshold - k.detach())/(q.shape[-1]*36)
+        # attn_test = attn.reshape(4,B//4,self.num_heads,N,N)
+        # print("attn_test[0]",attn_test[0].abs().mean(),"attn_test[1]",attn_test[1].abs().mean(),"attn_test[2]",attn_test[2].abs().mean(),"attn_test[3]",attn_test[3].abs().mean())
+
+        attn = self.attn_IF(attn)
+
+        attn = self.attn_drop(attn)
+
+        x = multi1(attn,v,(self.attn_IF.acc_q*self.attn_IF.q_threshold - attn.detach()),(self.v_IF.acc_q*self.v_IF.q_threshold - v.detach()))
+
+        x = self.after_attn_IF(x)
+        x = x.transpose(1, 2).reshape(B, N, C)
+
+        classtoken = v[:,:,0,:].unsqueeze(2)
+        feature_map = v[:,:,1:,:].reshape(B*self.num_heads,int(math.sqrt(N-1)),int(math.sqrt(N-1)),self.head_dim).permute(0,3,1,2) # B*H,C,N,N
+        feature_map = torch.cat([classtoken, self.dwc(feature_map).permute(0,2,3,1).reshape(B,self.num_heads,N-1,self.head_dim)],dim=2).transpose(1, 2).reshape(B, N, C)
+        feature_map = self.feature_IF(feature_map)
+
+        x = self.proj(x+feature_map)
+        x = self.proj_drop(x)
+        x = self.proj_IF(x)
+
+        return x
+
+
+class DyT(nn.Module):
+    def __init__(self, C, init_alpha=0.5):
+        super(DyT, self).__init__()
+        self.alpha = nn.Parameter(torch.tensor(torch.ones(1) * init_alpha))
+        self.gamma = nn.Parameter(torch.tensor(torch.ones(C)))
+        self.beta = nn.Parameter(torch.tensor(torch.zeros(C)))
+
+    def forward(self,x):
+        x = torch.tanh(self.alpha*x)
+        return self.gamma * x + self.beta
+
+
+class WindowAttention_no_softmax(nn.Module):
+    r""" Window based multi-head self attention (W-MSA) module with relative position bias.
+    It supports both of shifted and non-shifted window.
+
+    Args:
+        dim (int): Number of input channels.
+        window_size (tuple[int]): The height and width of the window.
+        num_heads (int): Number of attention heads.
+        qkv_bias (bool, optional):  If True, add a learnable bias to query, key, value. Default: True
+        attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
+        proj_drop (float, optional): Dropout ratio of output. Default: 0.0
+    """
+
+    def __init__(self, dim, window_size, num_heads, qkv_bias=True, attn_drop=0., proj_drop=0.):
+
+        super().__init__()
+        self.dim = dim
+        self.window_size = window_size  # Wh, Ww
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.head_dim = head_dim
+        self.scale = head_dim ** -0.5
+
+        # define a parameter table of relative position bias
+        self.relative_position_bias_table = nn.Parameter(
+            torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
+
+        # get pair-wise relative position index for each token inside the window
+        coords_h = torch.arange(self.window_size[0])
+        coords_w = torch.arange(self.window_size[1])
+        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+        coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+        relative_coords[:, :, 0] += self.window_size[0] - 1  # shift to start from 0
+        relative_coords[:, :, 1] += self.window_size[1] - 1
+        relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
+        relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+        self.register_buffer("relative_position_index", relative_position_index)
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+        # self.attnBatchNorm = MyBatchNorm1d(dim=coords_h.shape[0]*coords_w.shape[0])
+        self.attnBatchNorm = DyT(coords_h.shape[0]*coords_w.shape[0])
+        self.tokenNum = coords_h.shape[0]*coords_w.shape[0]
+        self.ReLU = nn.ReLU()
+
+        trunc_normal_(self.relative_position_bias_table, std=.02)
+        self.softmax = nn.Softmax(dim=-1)
+
+    def forward(self, x, mask: Optional[torch.Tensor] = None):
+        """
+        Args:
+            x: input features with shape of (num_windows*B, N, C)
+            mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
+        """
+        B_, N, C = x.shape
+        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv.unbind(0)  # make torchscript happy (cannot use tensor as tuple)
+        # q = F.relu6(q)
+        # k = F.relu6(k)
+        # v = torch.clamp(v,min=-6.0,max=6.0)
+
+        q = q * self.scale
+        attn = (q @ k.transpose(-2, -1))
+
+        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+            self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
+        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+        attn = attn + relative_position_bias.unsqueeze(0)
+
+        if mask is not None:
+            nW = mask.shape[0]
+            attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+            attn = attn.view(-1, self.num_heads, N, N)
+
+        attn = self.attn_drop(attn)
+        attn = F.relu(attn)/(N)
+
+        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
 class QWindowAttention(nn.Module):
     r""" Window based multi-head self attention (W-MSA) module with relative position bias.
     It supports both of shifted and non-shifted window.
@@ -1321,7 +1690,7 @@ class QWindowAttention(nn.Module):
 
         trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
-        self.attn_softmax_quan = MyQuan(self.level,sym=True)
+        self.attn_softmax_quan = MyQuan(self.level,sym=False)
 
     def forward(self, x, mask: Optional[torch.Tensor] = None):
         """
@@ -1351,11 +1720,8 @@ class QWindowAttention(nn.Module):
             nW = mask.shape[0]
             attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
             attn = attn.view(-1, self.num_heads, N, N)
-            attn = self.softmax(attn)
-        else:
-            attn = self.softmax(attn)
         # print("softmax std",attn.abs().std())
-        attn = self.attn_softmax_quan(attn)
+        attn = self.attn_softmax_quan(F.relu(attn)/(N))
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
@@ -1365,6 +1731,16 @@ class QWindowAttention(nn.Module):
         x = self.quan_proj(x)
         return x
 
+class DyT(nn.Module):
+    def __init__(self, C, init_alpha=1):
+        super(DyT, self).__init__()
+        self.alpha = nn.Parameter(torch.tensor(torch.ones(1) * init_alpha))
+        self.gamma = nn.Parameter(torch.tensor(torch.ones(C))*1.5)
+        self.beta = nn.Parameter(torch.tensor(torch.zeros(C)))
+
+    def forward(self,x):
+        x = torch.tanh(self.alpha*x)
+        return self.gamma * x + self.beta
 
 class SWindowAttention(nn.Module):
     r""" Window based multi-head self attention (W-MSA) module with relative position bias.
@@ -1477,13 +1853,13 @@ class SWindowAttention(nn.Module):
             nW = mask.shape[0]
             attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
             attn = attn.view(-1, self.num_heads, N, N)
-            attn = self.Ssoftmax(attn)
-        else:
-            attn = self.Ssoftmax(attn)
+        #     attn = self.Ssoftmax(attn)
+        # else:
+        #     attn = self.Ssoftmax(attn)
         
         # attn1 = attn.reshape(torch.Size([self.T, B_//self.T]) + attn.shape[1:])
         # print("Ssoftmax std",attn1.sum(dim=0).abs().std())
-        attn = self.attn_softmax_IF(attn)
+        attn = self.attn_softmax_IF(attn/N)
 
         attn = self.attn_drop(attn)
 
@@ -1523,64 +1899,6 @@ class SpikeMaxPooling(nn.Module):
         # print(output[0][0][0:4][0:4])
         
         return output
-    
-class SpikeMaxPooling_MS(nn.Module):
-    def __init__(self, maxpool, **kwargs):
-        super(SpikeMaxPooling_MS, self).__init__()
-        self.maxpool = maxpool
-        self.T = kwargs.get("time_step", 1)  # 总时间步长
-        self.reset()
-        
-    def reset(self):
-        """重置所有状态"""
-        self.prev_pooled_accum = None
-        self.accumulation = None
-        
-    def forward(self, x):
-        # 每次前向传递开始时重置状态，避免不同批次大小的问题
-        self.reset()
-        
-        total_batch = x.shape[0]
-        B = total_batch // self.T
-        device = x.device
-        
-        outputs = []
-        
-        # 按时间步处理
-        for t in range(self.T):
-            # 获取当前时间步的所有样本
-            t_start = t * B
-            t_end = (t + 1) * B
-            current_inputs = x[t_start:t_end]
-            
-            # 更新累积和
-            if self.accumulation is None:
-                self.accumulation = current_inputs
-            else:
-                # 确保维度匹配
-                if self.accumulation.shape[0] != current_inputs.shape[0]:
-                    # 如果批次大小改变，重置累积状态
-                    self.accumulation = current_inputs
-                    self.prev_pooled_accum = None
-                else:
-                    self.accumulation = self.accumulation + current_inputs
-            
-            # 计算当前累积和的maxpool结果
-            current_pooled = self.maxpool(self.accumulation)
-            
-            # 计算输出
-            if self.prev_pooled_accum is None:
-                output = current_pooled
-            else:
-                output = current_pooled - self.prev_pooled_accum
-            
-            # 更新前一个时间步的累积池化结果
-            self.prev_pooled_accum = current_pooled
-            
-            outputs.append(output)
-        
-        # 拼接所有时间步的输出
-        return torch.cat(outputs, dim=0) if outputs else x.new_tensor([])
 
 
 class Addition(nn.Module):
@@ -1658,7 +1976,6 @@ class LLConv2d(nn.Module):
     def forward(self,input):
         # print("LLConv2d.steps",self.steps)
         x = input
-        
         N,C,H,W = x.shape
         F_h,F_w = self.conv.kernel_size
         S_h,S_w = self.conv.stride
@@ -1733,63 +2050,13 @@ class LLConv2d_MS(nn.Module):
         self.steps = self.level//2 - 1
     
     def forward(self,input):
-        # print("LLConv2d_MS input.sum(dim=0).abs().mean()",input.sum(dim=0).abs().mean())
-        # print("LLConv2d_MS input.shape",input.shape)
         B = input.shape[0]//self.T
-        
         # print("LLConv2d_MS.input",input.reshape(torch.Size([self.T,B])+input.shape[1:]).sum(dim=0).abs().mean())
-        # print("LLConv2d_MS.steps",self.steps,"B",B,"self.T",self.T)
         output = torch.cat([nn.functional.conv2d(input[:B*self.steps], self.conv.weight, self.conv.bias, stride=self.conv.stride, padding=self.conv.padding, dilation=self.conv.dilation,groups=self.conv.groups),\
                             nn.functional.conv2d(input[B*self.steps:], self.conv.weight, stride=self.conv.stride, padding=self.conv.padding, dilation=self.conv.dilation,groups=self.conv.groups)],dim=0)
         # print("LLConv2d_MS.output",output.reshape(torch.Size([self.T,B])+output.shape[1:]).sum(dim=0).abs().mean())
-        # print("LLConv2d_MS output.sum(dim=0).abs().mean()",output.sum(dim=0).abs().mean())
-        # print("LLConv2d_MS output.shape",output.shape)
         return output
 
-class SpikingBatchNorm2d_MS(nn.Module):
-    def __init__(self, bn, **kwargs):
-        super(SpikingBatchNorm2d_MS, self).__init__()
-        self.bn = bn  # 保存原始BatchNorm模块
-        self.level = kwargs["level"]
-        self.T = kwargs["time_step"]
-        self.steps = self.level//2 - 1
-        self.spike = True
-        self.step = kwargs.get("step", None)
-    
-    def forward(self, input):
-        B = input.shape[0] // self.T  # 批次大小
-        
-        # 第一部分：应用带有缩放过的bias的BatchNorm
-        first_part = F.batch_norm(
-            input[:B*self.steps],
-            self.bn.running_mean ,  
-            self.bn.running_var,
-            self.bn.weight,
-            self.bn.bias,
-            self.bn.training,
-            self.bn.momentum,
-            self.bn.eps
-        ) if B*self.steps > 0 else input.new_tensor([])
-        
-        # 第二部分：应用没有bias的BatchNorm
-        second_part = F.batch_norm(
-            input[B*self.steps:],
-            torch.zeros_like(self.bn.running_mean).to(input.device),
-            self.bn.running_var,
-            self.bn.weight,
-            None,  # 无bias
-            self.bn.training,
-            self.bn.momentum,
-            self.bn.eps
-        ) if input.shape[0] > B*self.steps else input.new_tensor([])
-        
-        # 拼接结果
-        if first_part.numel() > 0 and second_part.numel() > 0:
-            return torch.cat([first_part, second_part], dim=0)
-        elif first_part.numel() > 0:
-            return first_part
-        else:
-            return second_part
 
 class LLLinear(nn.Module):
     def __init__(self,linear,**kwargs):
@@ -1944,21 +2211,102 @@ class Attention_no_softmax(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.attn_Relu = nn.ReLU(inplace=True)
         self.proj = nn.Linear(dim, dim)
+        # self.attnBatchnorm = MyBatchNorm1d(dim=dim)
         self.proj_drop = nn.Dropout(proj_drop)
+
+        # self.scale_size_v = nn.Parameter(torch.tensor([(2*i+1)*1.0 for i in range(197)], requires_grad=False).unsqueeze(0).unsqueeze(0).unsqueeze(-1)) # 1,1,N,1
+        self.dwc = nn.Conv2d(in_channels=head_dim, out_channels=head_dim, kernel_size=5,
+                        groups=head_dim, padding=5 // 2)
+        # self.positional_encoding = nn.Parameter(torch.zeros(size=(1, self.num_heads, 14 * 14 + 1, head_dim)))
 
     def forward(self, x):   
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
+        input_detype = x.dtype
+        if input_detype == torch.float16:
+            x = x.to(torch.bfloat16)
+        if self.training and input_detype == torch.float16:
+            with torch.amp.autocast(dtype=torch.bfloat16, device_type='cuda', enabled=True):
+                qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4).contiguous()
+                q, k, v = qkv[0], qkv[1], qkv[2]    # make torchscript happy (cannot use tensor as tuple)
+                q = F.relu6(q)
+                k = F.relu6(k)
+                # v = torch.clamp(v,min=-6.0,max=6.0)
 
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = self.attn_Relu(attn)/(N)
-        attn = self.attn_drop(attn)
+                attn = (q @ k.transpose(-2, -1)).contiguous() * self.scale / ((float(q.shape[-1]))*36)
+                attn = self.attn_drop(attn)
 
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        x = self.proj(x)
+                x = (attn @ v).transpose(1, 2).reshape(B, N, C).contiguous()
+                classtoken = v[:,:,0,:].unsqueeze(2).contiguous()
+                feature_map = v[:,:,1:,:].reshape(B*self.num_heads,int(math.sqrt(N-1)),int(math.sqrt(N-1)),self.head_dim).permute(0,3,1,2).contiguous() # B*H,C,N,N
+                feature_map = torch.cat([classtoken, self.dwc(feature_map).permute(0,2,3,1).reshape(B,self.num_heads,N-1,self.head_dim)],dim=2).transpose(1, 2).reshape(B, N, C).contiguous()
+                x = x.to(input_detype)
+                feature_map = feature_map.to(input_detype)
+        else:
+            qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4).contiguous()
+            q, k, v = qkv[0], qkv[1], qkv[2]    # make torchscript happy (cannot use tensor as tuple)
+            q = F.relu6(q)
+            k = F.relu6(k)
+            # v = torch.clamp(v,min=-6.0,max=6.0)
+
+            attn = (q @ k.transpose(-2, -1)).contiguous() * self.scale / ((float(q.shape[-1]))*36)
+            attn = self.attn_drop(attn)
+
+            x = (attn @ v).transpose(1, 2).reshape(B, N, C).contiguous()
+            classtoken = v[:,:,0,:].unsqueeze(2).contiguous()
+            feature_map = v[:,:,1:,:].reshape(B*self.num_heads,int(math.sqrt(N-1)),int(math.sqrt(N-1)),self.head_dim).permute(0,3,1,2).contiguous() # B*H,C,N,N
+            feature_map = torch.cat([classtoken, self.dwc(feature_map).permute(0,2,3,1).reshape(B,self.num_heads,N-1,self.head_dim)],dim=2).transpose(1, 2).reshape(B, N, C).contiguous()
+
+        x = self.proj(x + feature_map)
+        # x = self.proj(x+self.v_proj(F.relu(v.transpose(1, 2).reshape(B, N, C).transpose(1, 2))).transpose(1, 2))
         x = self.proj_drop(x)
         return x
+
+
+# class Attention_no_softmax(nn.Module):
+#     def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.):
+#         super().__init__()
+#         self.num_heads = num_heads
+#         head_dim = dim // num_heads
+#         self.head_dim = head_dim
+#         # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights
+#         self.scale = qk_scale or head_dim ** -0.5
+
+#         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+#         self.attn_drop = nn.Dropout(attn_drop)
+#         self.attn_Relu = nn.ReLU(inplace=True)
+#         self.proj = nn.Linear(dim, dim)
+#         self.attnBatchnorm = MyBatchNorm1d(dim=197)
+#         self.proj_drop = nn.Dropout(proj_drop)
+#         self.scale_size_v = nn.Parameter(torch.tensor([(i+1)*1.0 for i in range(197)], requires_grad=False).unsqueeze(0).unsqueeze(0).unsqueeze(-1)) # 1,1,N,1
+#         # self.v_proj = nn.Linear(197, 197)
+
+#         # self.dwc = nn.Conv2d(in_channels=head_dim, out_channels=head_dim, kernel_size=5,
+#         #                 groups=head_dim, padding=5 // 2)
+#         # self.positional_encoding = nn.Parameter(torch.zeros(size=(1, 14 * 14, dim)))
+
+#     def forward(self, x):   
+#         B, N, C = x.shape
+#         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+#         q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
+#         q = F.relu6(q)
+#         k = F.relu6(k)
+#         # v = F.relu6(v)
+#         # print("q,k,v",q.abs().mean(),k.abs().mean(),v.abs().mean())
+
+#         attn = q @ k.transpose(-2, -1) * self.scale / (q.shape[-1]*36)
+#         attn = self.attn_drop(attn)
+#         attn = (torch.tril(attn) + torch.tril(attn.transpose(-2, -1)))/2
+
+#         x = (attn @ torch.cumsum(v, dim=-2)/self.scale_size_v).transpose(1, 2).reshape(B, N, C)
+#         # classtoken = v[:,:,0,:].unsqueeze(2)
+#         # feature_map = v[:,:,1:,:].reshape(B*self.num_heads,int(math.sqrt(N-1)),int(math.sqrt(N-1)),self.head_dim).permute(0,3,1,2) # B*H,C,N,N
+#         # feature_map = torch.cat([classtoken, self.dwc(feature_map).permute(0,2,3,1).reshape(B,self.num_heads,N-1,self.head_dim)],dim=2).transpose(1, 2).reshape(B, N, C)
+#         # x = self.proj(x+feature_map)
+#         # x = self.proj(x+self.v_proj(F.relu(v.transpose(1, 2).reshape(B, N, C).transpose(1, 2))).transpose(1, 2))
+#         x = self.proj(x)
+#         x = self.proj_drop(x)
+#         return x
+
 
 
 class MyBatchNorm1d(nn.BatchNorm1d):
@@ -1968,6 +2316,7 @@ class MyBatchNorm1d(nn.BatchNorm1d):
         self.T = 0
         self.step = 0
         self.momentum = 0.1
+        self.eps = 1e-5
     
     def forward(self,x):
         # self.training = False
@@ -2053,7 +2402,7 @@ class MLP_BN(nn.Module):
 
     def forward(self, x):
         x = self.fc1(x)
-        x = self.bn1(x)
+        # x = self.bn1(x)
         x = self.act(x)
         x = self.drop1(x)
         x = self.fc2(x)
@@ -2138,104 +2487,3 @@ def save_fc_input_for_bin_snn(input,dir,name):
     if local_rank == 0:
         torch.save(input,f'{dir}/act_{name}_T={T}_B={B}_N={N}.pth')
 
-
-
-
-
-
-class _ST_BIFNeuron_MS(nn.Module):
-    def __init__(self, q_threshold, level, sym=False, first_neuron=False, need_spike_tracer=False):
-        super(_ST_BIFNeuron_MS, self).__init__()
-        
-        self.q = None     
-        self.acc_q = None
-        
-        self.need_spike_tracer = need_spike_tracer
-        self.T = 0
-        self.first_neuron = first_neuron
-        self.suppress_over_fire = False
-        self.overfireLoss = 0.0
-        self.name = ""
-
-        self.q_threshold = nn.Parameter(torch.tensor(q_threshold), requires_grad=False)
-        self.level = torch.tensor(level)
-        self.sym = sym
-
-        if sym:
-            self.register_buffer("pos_max", torch.tensor(level//2 - 1))
-            self.register_buffer("neg_min", torch.tensor(-level//2 - 1))
-        else:
-            self.register_buffer("pos_max", torch.tensor(level - 1))
-            self.register_buffer("neg_min", torch.tensor(0))
-
-        self.register_buffer("prefire", torch.zeros(2))
-        
-        self.init = True
-        self.eps = 0
-        self.spike_count = 0
-
-    def reset(self):
-        # 显式重置（清零）q 与 acc_q
-        self.q = None
-        self.acc_q = None
-
-    def forward(self, input):
-        """
-        我们每次 forward 前，如果 self.q 或 self.acc_q 是 None，说明是第一次推理，
-        那就从 0 初始化；否则，就用它们续算。
-        """
-        # 如果是第一次 forward 或者刚刚 reset()，q、acc_q 都是 None
-        if self.q is None:
-            # 默认为 0
-            self.q = torch.zeros(1, device=input.device, dtype=input.dtype)
-        if self.acc_q is None:
-            # 默认为 0
-            self.acc_q = torch.zeros(1, device=input.device, dtype=input.dtype)
-
-        # 把上一次的 (q, acc_q) 赋值给 prefire[0], prefire[1]
-        # 这样在 CUDA kernel 中就直接拿来自作为初始膜电位、初始 T
-        # 你也可以保留原先 (0.5 + prefire[0]) * v_th 的偏移逻辑，但需要改 kernel
-        self.prefire[0] = self.q.item()        # 膜电位
-        self.prefire[1] = self.acc_q.item()    # 积分态
-
-        N = input.shape[0]
-        ori_shape = input.shape
-        time_steps = int(self.T) if self.T > 0 else 1  # 如果你在别处设置了 self.T，可以灵活处理
-        if time_steps == 1:
-            time_steps = ori_shape[0]
-
-        input = input.reshape(torch.Size([time_steps, N // time_steps]) + input.shape[1:])
-        
-        # 调用自定义的函数进行前向
-        spike_seq, v, T_seq = ST_BIFNodeATGF_MS_CUDA.apply(
-            input.flatten(2),
-            self.q_threshold,
-            self.pos_max,
-            self.neg_min,
-            self.prefire  # 传进去的 prefire 含两元素，kernel 里会当做 v、T 的初值
-        )
-
-        # spike_seq 形状: [time_steps, ...]
-        # v: 膜电位最终值
-        # T_seq: [time_steps, ...] (含每一步的积分态值)
-
-        # 如果需要跟踪 T 序列，可以把 T_seq 保存到 self.acc_q
-        # 假如你只想在下一次 forward 时继续用最后一个时刻 T，那就取 T_seq[-1]
-        if self.need_spike_tracer:
-            # 这里演示把整个 T_seq 都保存下来（你需要就留着）
-            # 但同时为了续算，需要把最后一个时刻再记一下
-            self.acc_q = T_seq[-1].detach()
-        else:
-            # 不需要全序列的话，只存最后一个时刻 T
-            self.acc_q = T_seq[-1].detach()
-
-        # 记录最终膜电位
-        self.q = v.detach()
-
-        if self.suppress_over_fire:
-            # overfireLoss 只是演示
-            self.overfireLoss = ((spike_seq.abs().sum(dim=0) - spike_seq.sum(dim=0).abs())).sum() / spike_seq.numel()
-
-        self.spike_count = spike_seq.abs().sum(dim=0).sum()
-        
-        return spike_seq.reshape(ori_shape) * self.q_threshold

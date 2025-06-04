@@ -9,6 +9,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from neuron_cupy.cuda_operator import ST_BIFNodeATGF_MS_CUDA
+# from neuron_cupy.cuda_operator_optimized import ST_BIFNodeATGF_MS_CUDA
+# from snn.neurons.st_bif_optimized import ST_BIFNodeATGF_MS_CUDA_Optimized as ST_BIFNodeATGF_MS_CUDA
 
 
 def theta_backward(x):

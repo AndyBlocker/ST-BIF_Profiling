@@ -5,11 +5,11 @@ import math
 import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
-from spike_quan_layer import MyQuan,IFNeuron,LLConv2d,LLLinear,QAttention,SAttention, SpikeMaxPooling_MS,Spiking_LayerNorm,QuanConv2d,QuanLinear,Attention_no_softmax,ORIIFNeuron, SpikingBatchNorm2d_MS, save_module_inout, Addition, SpikeMaxPooling, spiking_BatchNorm2d, ST_BIFNeuron_SS, MyBachNorm, spiking_BatchNorm2d_MS, ST_BIFNeuron_MS, MyBatchNorm1d, MLP_BN
-from spike_quan_layer import LLLinear_MS, LLConv2d_MS, LN2BNorm, QWindowAttention, SWindowAttention
+from legacy.spike_quan_layer import MyQuan,IFNeuron,LLConv2d,LLLinear,QAttention,SAttention,Spiking_LayerNorm,QuanConv2d,QuanLinear,Attention_no_softmax,ORIIFNeuron, save_module_inout, Addition, SpikeMaxPooling, spiking_BatchNorm2d, ST_BIFNeuron_SS, MyBachNorm, spiking_BatchNorm2d_MS, ST_BIFNeuron_MS, MyBatchNorm1d, MLP_BN
+from legacy.spike_quan_layer import LLLinear_MS, LLConv2d_MS, LN2BNorm, QWindowAttention, SWindowAttention, WindowAttention_no_softmax, QAttention_without_softmax, SAttention_without_softmax, DyT, spiking_dyt
 import sys
 from timm.models.vision_transformer import Attention,Mlp,Block
-from timm.models.swin_transformer import SwinTransformerBlock
+from timm.models.swin_transformer import SwinTransformerBlock, WindowAttention, PatchEmbed
 from copy import deepcopy
 import glo
 import os
@@ -24,8 +24,6 @@ def get_subtensors(tensor,mean,std,sample_grain=255,time_step=4):
             accu = torch.cat((accu,output),dim=0)
         else:
             accu = torch.cat((accu,output*0.0),dim=0)
-    # print(accu.shape)
-    # print(accu.sum(dim=0).abs().mean())
     return accu
 
 def reset_model(model):
@@ -143,6 +141,101 @@ def attn_convert(QAttn:QAttention,SAttn:SAttention,level,neuron_type, T):
     #     SAttn.proj_IF.is_init = False
     # elif isinstance(SAttn.proj_IF,ST_BIFNeuron_SS) or isinstance(SAttn.proj_IF,ST_BIFNeuron_MS):
     #     SAttn.proj_IF.init = True
+
+    SAttn.attn_drop = QAttn.attn_drop
+    SAttn.proj_drop = QAttn.proj_drop
+
+def attn_convert(QAttn:QAttention_without_softmax,SAttn:SAttention_without_softmax,level,neuron_type, T):
+    if QAttn.qkv is not None:
+        QAttn.qkv.bias.data = QAttn.qkv.bias.data/(level//2-1)
+    SAttn.qkv = LLLinear_MS(linear = QAttn.qkv,neuron_type = "ST-BIF",time_step=T,level = level)
+    
+    if QAttn.proj is not None:
+        QAttn.proj.bias.data = QAttn.proj.bias.data/(level//2-1)
+    SAttn.proj = LLLinear_MS(linear = QAttn.proj,neuron_type = "ST-BIF",time_step=T,level = level)
+
+    if QAttn.dwc is not None:
+        QAttn.dwc.bias.data = QAttn.dwc.bias.data/(level//2-1)
+    SAttn.dwc = LLConv2d_MS(conv = QAttn.dwc,neuron_type = "ST-BIF",time_step=T,level = level)
+
+    SAttn.q_IF.neuron_type= neuron_type
+    SAttn.q_IF.level = level
+    SAttn.q_IF.T = T
+    SAttn.q_IF.q_threshold.data = QAttn.quan_q.s.data
+    SAttn.q_IF.pos_max = min(QAttn.quan_q.pos_max, 6.0/QAttn.quan_q.s.data)
+    SAttn.q_IF.neg_min = QAttn.quan_q.neg_min
+    if isinstance(SAttn.q_IF,IFNeuron):
+        SAttn.q_IF.is_init = False
+    elif isinstance(SAttn.q_IF,ST_BIFNeuron_SS) or isinstance(SAttn.q_IF,ST_BIFNeuron_MS):
+        SAttn.q_IF.init = True
+
+    SAttn.k_IF.neuron_type= neuron_type
+    SAttn.k_IF.level = level
+    SAttn.k_IF.T = T
+    SAttn.k_IF.q_threshold.data = QAttn.quan_k.s.data
+    SAttn.k_IF.pos_max = min(QAttn.quan_k.pos_max, 6.0/QAttn.quan_k.s.data)
+    SAttn.k_IF.neg_min = QAttn.quan_k.neg_min
+    if isinstance(SAttn.k_IF,IFNeuron):
+        SAttn.k_IF.is_init = False
+    elif isinstance(SAttn.k_IF,ST_BIFNeuron_SS) or isinstance(SAttn.k_IF,ST_BIFNeuron_MS):
+        SAttn.k_IF.init = True
+
+    SAttn.v_IF.neuron_type= neuron_type
+    SAttn.v_IF.level = level
+    SAttn.v_IF.T = T
+    SAttn.v_IF.q_threshold.data = QAttn.quan_v.s.data
+    SAttn.v_IF.pos_max = QAttn.quan_v.pos_max
+    SAttn.v_IF.neg_min = QAttn.quan_v.neg_min
+    if isinstance(SAttn.v_IF,IFNeuron):
+        SAttn.v_IF.is_init = False
+    elif isinstance(SAttn.v_IF,ST_BIFNeuron_SS) or isinstance(SAttn.v_IF,ST_BIFNeuron_MS):
+        SAttn.v_IF.init = True
+
+    SAttn.attn_IF.neuron_type= neuron_type
+    SAttn.attn_IF.level = level
+    SAttn.attn_IF.q_threshold.data = QAttn.attn_quan.s.data
+    SAttn.attn_IF.T = T
+    SAttn.attn_IF.pos_max = QAttn.attn_quan.pos_max
+    SAttn.attn_IF.neg_min = QAttn.attn_quan.neg_min
+    if isinstance(SAttn.attn_IF,IFNeuron):
+        SAttn.attn_IF.is_init = False
+    elif isinstance(SAttn.attn_IF,ST_BIFNeuron_SS) or isinstance(SAttn.attn_IF,ST_BIFNeuron_MS):
+        SAttn.attn_IF.init = True
+        # SAttn.attn_IF.q_threshold.data = torch.tensor(0.125)
+
+    SAttn.after_attn_IF.neuron_type= neuron_type
+    SAttn.after_attn_IF.level = level
+    SAttn.after_attn_IF.q_threshold.data = QAttn.after_attn_quan.s.data
+    SAttn.after_attn_IF.T = T
+    SAttn.after_attn_IF.pos_max = QAttn.after_attn_quan.pos_max
+    SAttn.after_attn_IF.neg_min = QAttn.after_attn_quan.neg_min
+    if isinstance(SAttn.after_attn_IF,IFNeuron):
+        SAttn.after_attn_IF.is_init = False
+    elif isinstance(SAttn.after_attn_IF,ST_BIFNeuron_SS) or isinstance(SAttn.after_attn_IF,ST_BIFNeuron_MS):
+        SAttn.after_attn_IF.init = True
+        # SAttn.after_attn_IF.q_threshold.data = torch.tensor(0.125)
+
+    SAttn.proj_IF.neuron_type= neuron_type
+    SAttn.proj_IF.level = level
+    SAttn.proj_IF.q_threshold.data = QAttn.quan_proj.s.data
+    SAttn.proj_IF.T = T
+    SAttn.proj_IF.pos_max = QAttn.quan_proj.pos_max
+    SAttn.proj_IF.neg_min = QAttn.quan_proj.neg_min
+    if isinstance(SAttn.proj_IF,IFNeuron):
+        SAttn.proj_IF.is_init = False
+    elif isinstance(SAttn.proj_IF,ST_BIFNeuron_SS) or isinstance(SAttn.proj_IF,ST_BIFNeuron_MS):
+        SAttn.proj_IF.init = True
+
+    SAttn.feature_IF.neuron_type= neuron_type
+    SAttn.feature_IF.level = level
+    SAttn.feature_IF.q_threshold.data = QAttn.feature_quan.s.data
+    SAttn.feature_IF.T = T
+    SAttn.feature_IF.pos_max = QAttn.feature_quan.pos_max
+    SAttn.feature_IF.neg_min = QAttn.feature_quan.neg_min
+    if isinstance(SAttn.feature_IF,IFNeuron):
+        SAttn.feature_IF.is_init = False
+    elif isinstance(SAttn.feature_IF,ST_BIFNeuron_SS) or isinstance(SAttn.feature_IF,ST_BIFNeuron_MS):
+        SAttn.feature_IF.init = True
 
     SAttn.attn_drop = QAttn.attn_drop
     SAttn.proj_drop = QAttn.proj_drop
@@ -390,6 +483,11 @@ class SNNWrapper(nn.Module):
                 attn_convert(QAttn=child,SAttn=SAttn,level=self.level,neuron_type = self.neuron_type, T=self.T)
                 model._modules[name] = SAttn
                 is_need = True
+            elif isinstance(child, QAttention_without_softmax):
+                SAttn = SAttention_without_softmax(dim=child.num_heads*child.head_dim,num_heads=child.num_heads,level=self.level,is_softmax=self.is_softmax,neuron_layer=ST_BIFNeuron_SS,T=self.T)
+                attn_convert(QAttn=child,SAttn=SAttn,level=self.level,neuron_type = self.neuron_type, T=self.T)
+                model._modules[name] = SAttn
+                is_need = True
             elif isinstance(child, nn.Conv2d) or isinstance(child, QuanConv2d):
                 model._modules[name] = LLConv2d(child,**self.kwargs)
                 is_need = True
@@ -558,6 +656,7 @@ class SNNWrapper_MS(nn.Module):
         self.visualize = False
         self.first_neuron = True
         self.blockNum = 0
+        # self.model_reset = None
         if self.model_name.count("vit") > 0:
             self.pos_embed = deepcopy(self.model.pos_embed.data)
             self.cls_token = deepcopy(self.model.cls_token.data)
@@ -578,17 +677,7 @@ class SNNWrapper_MS(nn.Module):
                 for order in self.calOrder:
                     f.write(order+"\n")
                 f.close()
-        # for debug: print out params
-        print("=====================")
-        print("self.model",self.model)
-        print("self.model_name",self.model_name)
-        print("self.kwargs",self.kwargs)
-        print("self.T:",self.T)
-        print("self.level:",self.level)
-        print("self.step:",self.step)
-        
-        
-        
+    
     def hook_mid_feature(self):
         self.feature_list = []
         self.input_feature_list = []
@@ -648,8 +737,15 @@ class SNNWrapper_MS(nn.Module):
                 attn_convert(QAttn=child,SAttn=SAttn,level=self.level,neuron_type = self.neuron_type, T=self.T)
                 model._modules[name] = SAttn
                 is_need = True
+            elif isinstance(child, QAttention_without_softmax):
+                SAttn = SAttention_without_softmax(dim=child.num_heads*child.head_dim,num_heads=child.num_heads,level=self.level,is_softmax=self.is_softmax,neuron_layer=ST_BIFNeuron_MS,T=self.T)
+                attn_convert(QAttn=child,SAttn=SAttn,level=self.level,neuron_type = self.neuron_type, T=self.T)
+                # self.blockNum = self.blockNum + 1/12
+                # SAttn.attn_IF.prefire.data = torch.tensor(0.125)
+                model._modules[name] = SAttn
+                is_need = True
             elif isinstance(child, QWindowAttention):
-                self.blockNum = self.blockNum + 1/24
+                # self.blockNum = self.blockNum + 1/24
                 SAttn = SWindowAttention(dim=child.num_heads*child.head_dim, window_size=child.window_size,num_heads=child.num_heads,level=self.level,neuron_layer=ST_BIFNeuron_MS,T=self.T)
                 attn_convert_Swin(QAttn=child,SAttn=SAttn,level=self.level,neuron_type = self.neuron_type, T=self.T, suppress_over_fire=self.suppress_over_fire)
                 # SAttn.attn_softmax_IF.prefire.data = torch.tensor(self.blockNum*0.2)
@@ -658,7 +754,6 @@ class SNNWrapper_MS(nn.Module):
             elif isinstance(child, nn.Conv2d) or isinstance(child, QuanConv2d):
                 if child.bias is not None:
                     model._modules[name].bias.data = model._modules[name].bias.data/(self.level//2 - 1)
-                    print(f"{model._modules[name]}'s bias divided by {self.level//2 - 1}")
                 model._modules[name] = LLConv2d_MS(child,time_step=self.T,**self.kwargs)
                 is_need = True
             elif isinstance(child, nn.Linear) or isinstance(child, QuanLinear):
@@ -670,19 +765,21 @@ class SNNWrapper_MS(nn.Module):
                 model._modules[name] = LLLinear_MS(child,time_step=self.T,**self.kwargs)
                 is_need = True
             elif isinstance(child, nn.MaxPool2d):
-                model._modules[name] = SpikeMaxPooling_MS(child, time_step = self.T)
+                model._modules[name] = SpikeMaxPooling(child)
+                is_need = True
+            elif isinstance(child, DyT):
+                model._modules[name] = spiking_dyt(child,step=self.step,T=self.T)
                 is_need = True
             elif isinstance(child,nn.BatchNorm2d) or isinstance(child,nn.BatchNorm1d) or isinstance(child, MyBatchNorm1d):
                 # if self.learnable:
-                # model._modules[name] = MyBachNorm(bn=child,T=self.T)
+                #     model._modules[name] = MyBachNorm(bn=child,T=self.T)
                 # else:
                 # model._modules[name] = spiking_BatchNorm2d_MS(bn=child,level=self.level//2 - 1,input_allcate=False)
-                model._modules[name].bias.data = model._modules[name].bias.data/self.step
-                model._modules[name].running_mean = model._modules[name].running_mean/self.step
+                model._modules[name].bias.data = model._modules[name].bias.data/(self.level//2 - 1)
+                model._modules[name].running_mean = model._modules[name].running_mean/(self.level//2 - 1)
                 model._modules[name].spike = True
                 model._modules[name].T = self.T
                 model._modules[name].step = self.step
-                model._modules[name] = SpikingBatchNorm2d_MS(bn=child,level=self.level, time_step = self.T)
                 
                 is_need = True
             elif isinstance(child, nn.LayerNorm):
@@ -714,40 +811,24 @@ class SNNWrapper_MS(nn.Module):
 
     def forward(self,x, verbose=False):
         input = get_subtensors(x,0.0,0.0,sample_grain=self.step, time_step=self.T)  
-        # print("Model Information: T:",self.T,"step:",self.step)
         # input = input * self.step
         # if self.cfg.model.count("vit") > 0:
-        #     self.model.pos_embed.data = self.modefl.pos_embed/self.step
-        #     self.model.cls_token.data = self.model.cls_token/self.step
+            # self.model.pos_embed.data = self.model.pos_embed/self.step
+            # self.model.cls_token.data = self.model.cls_token/self.step
         # elif self.cfg.model.count("swin") > 0:
-        #     self.model.pos_drop.p = 0
-        
+            # self.model.pos_drop.p = 0
         T,B,C,H,W = input.shape
         input = input.reshape(T*B,C,H,W)
-        # print("SNN input.abs().mean()",input.sum(dim=0).abs().mean())
         output = self.model(input)
         output = output.reshape(torch.Size([T,B]) + output.shape[1:])
         accu_per_t = []
         accu = 0.0
-        
+        self.reset()
         if verbose == True:
             for t in range(T):
                 accu = accu + output[t]
                 accu_per_t.append(accu + 0.0)
             return output.sum(dim=0), self.T, torch.stack(accu_per_t,dim=0)
-        
-        
-        spike_count = 0
-        def check_spike_count(child):
-            nonlocal spike_count
-            children = list(child.named_children())
-            for name, module in children:
-                if isinstance(module, ST_BIFNeuron_MS):
-                    spike_count+= module.spike_count
-                else: 
-                    check_spike_count(module)
-        check_spike_count(self.model)
-        self.reset()
         return output.sum(dim=0)
 
 
@@ -776,6 +857,17 @@ def remove_softmax(model):
             reluattn.proj_drop = child.proj_drop
             is_need = True
             model._modules[name] = reluattn
+        if isinstance(child,WindowAttention):
+            reluattn = WindowAttention_no_softmax(dim=child.num_heads*child.head_dim, window_size=child.window_size,num_heads=child.num_heads)
+            reluattn.qkv = child.qkv
+            reluattn.attn_drop = child.attn_drop
+            reluattn.proj = child.proj
+            reluattn.proj_drop = child.proj_drop
+            reluattn.relative_position_bias_table = child.relative_position_bias_table
+            reluattn.relative_position_index = child.relative_position_index
+            is_need = True
+            model._modules[name] = reluattn
+            
         # elif isinstance(child, nn.LayerNorm):
         #     LN = MyBatchNorm1d(num_features = child.normalized_shape[0])
         #     # LN.weight.data = child.weight
@@ -798,7 +890,7 @@ def myquan_replace(model,level,weight_bit=32, is_softmax = True):
         children = list(model.named_children())
         for name, child in children:
             is_need = False
-            if isinstance(child, QAttention):
+            if isinstance(child, QAttention_without_softmax):
                 index = index + 1
                 is_need = True
             if not is_need:
@@ -812,13 +904,14 @@ def myquan_replace(model,level,weight_bit=32, is_softmax = True):
             is_need = False
             if isinstance(child, Block):
                 # print(children)
-                qattn = QAttention(dim=child.attn.num_heads*child.attn.head_dim,num_heads=child.attn.num_heads,level=level,is_softmax=is_softmax)
+                qattn = QAttention_without_softmax(dim=child.attn.num_heads*child.attn.head_dim,num_heads=child.attn.num_heads,level=level,is_softmax=is_softmax)
                 qattn.qkv = child.attn.qkv
                 # qattn.q_norm = child.q_norm
                 # qattn.k_norm = child.k_norm
                 qattn.attn_drop = child.attn.attn_drop
                 qattn.proj = child.attn.proj
                 qattn.proj_drop = child.attn.proj_drop
+                qattn.dwc = child.attn.dwc
                 model._modules[name].attn = qattn
                 # model._modules[name].act1 = MyQuan(level, sym=True)
                 # model._modules[name].act2 = MyQuan(level, sym=True)
@@ -831,6 +924,9 @@ def myquan_replace(model,level,weight_bit=32, is_softmax = True):
                 # model._modules[name].addition2 = nn.Sequential(Addition(),MyQuan(level, sym=True))
                 # print("model._modules[name].addition1",model._modules[name].addition1)
                 # print("index",cur_index,"myquan replace finish!!!!")
+                cur_index = cur_index + 1
+                is_need = True
+            elif isinstance(child, PatchEmbed):
                 cur_index = cur_index + 1
                 is_need = True
             elif isinstance(child, SwinTransformerBlock):
@@ -875,7 +971,7 @@ def myquan_replace(model,level,weight_bit=32, is_softmax = True):
             #     model._modules[name].act = nn.Sequential(MyQuan(level,sym = False),child.act)
             #     model._modules[name].fc2 = nn.Sequential(child.fc2,MyQuan(level,sym = True))
             #     is_need = True
-            elif isinstance(child, MyBatchNorm1d):
+            elif isinstance(child, MyBatchNorm1d) or isinstance(child, DyT):
                 model._modules[name] = nn.Sequential(child,MyQuan(level,sym = True))
                 is_need = True
             elif isinstance(child, nn.Conv2d):

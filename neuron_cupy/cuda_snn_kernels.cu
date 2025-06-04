@@ -1,22 +1,33 @@
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
-// cuda_snn_kernels.cu
+// cuda_snn_kernels.cu with double precision support
 extern "C" {
 
+// ========== Float32 functions ==========
 __device__ float theta_fp32(float x) {
     return x > float(0.0) ? float(1.0) : float(0.0);
-}
-
-__device__ __half theta_fp16(__half x) {
-    return x > __half(0.0) ? __half(1.0) : __half(0.0);
 }
 
 __device__ float theta_eq_fp32(float x) {
     return x >= float(0.0) ? float(1.0) : float(0.0);
 }
 
+// ========== Float16 functions ==========
+__device__ __half theta_fp16(__half x) {
+    return x > __half(0.0) ? __half(1.0) : __half(0.0);
+}
+
 __device__ __half theta_eq_fp16(__half x) {
     return x >= __half(0.0) ? __half(1.0) : __half(0.0);
+}
+
+// ========== Float64 (double) functions ==========
+__device__ double theta_fp64(double x) {
+    return x > 0.0 ? 1.0 : 0.0;
+}
+
+__device__ double theta_eq_fp64(double x) {
+    return x >= 0.0 ? 1.0 : 0.0;
 }
 
 // __device__ float theta_backward_fp32(float x, float V_thr, float S, float S_min, float S_max) {
@@ -43,6 +54,14 @@ __device__ __half theta_backward_fp16(__half x, __half V_thr, __half S, __half S
     __half a = __hdiv(__float2half(1.0f), V_thr);
     __half upper_x = __hdiv(__hmul(__hneg(__hsub(x, mu)), __hsub(x, mu)), __hmul(__float2half(2.0f), __hmul(sigma, sigma)));
     return __hmul(a, hexp(upper_x));
+}
+
+__device__ double theta_backward_fp64(double x, double V_thr, double S, double S_min, double S_max) {
+    double mu = 0.0;
+    double sigma = 0.405 * V_thr;
+    double a = 1.0/V_thr;
+    double upper_x = -(x - mu) * (x - mu) / (2.0 * sigma * sigma);
+    return a * exp(upper_x);
 }
 
 // FP32 kernels
@@ -255,6 +274,105 @@ __global__ void backward_kernel_fp16(
 
         // Store result
         grad_x_seq[current_idx - batch_size * features] = grad_X;
+    }
+}
+
+// ========== FP64 (double) kernels ==========
+__global__ void forward_kernel_fp64(
+    const double* x_seq,
+    const double* v_th,
+    const double* T_max,
+    const double* T_min,
+    const double* prefire,
+    double* spike_seq_out,
+    double* v_out,
+    double* T_seq_out,
+    double* H_seq_out,
+    int batch_size,
+    int time_steps,
+    int features
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= batch_size * features) return;
+        
+    double v = (0.5 + prefire[0]) * v_th[0];
+    double T = 0.0;
+    
+    T_seq_out[idx] = T;
+    spike_seq_out[idx] = 0.0;
+    H_seq_out[idx] = v;
+    
+    for (int t = 0; t < time_steps; t++) {
+        int current_idx = (t * batch_size * features) + idx;
+        int next_idx = ((t + 1) * batch_size * features) + idx;
+        
+        v += x_seq[current_idx];
+        H_seq_out[next_idx] = v;
+        
+        double spike = 0.0;
+        if (v >= v_th[0] && T < T_max[0]) {
+            spike = 1.0;
+        } else if (v < 0.0 && T > T_min[0]) {
+            spike = -1.0;
+        }
+        
+        if (t < T_max[0]){
+            v -= (v_th[0] * spike + prefire[0]*v_th[0]/T_max[0]);
+        }
+        else{
+            v -= (v_th[0] * spike);
+        }
+
+        T += spike;
+        
+        spike_seq_out[next_idx] = spike;
+        T_seq_out[next_idx] = T;
+    }
+    
+    v_out[idx] = v;
+}
+
+__global__ void backward_kernel_fp64(
+    const double* grad_spike_seq,
+    const double* grad_v,
+    const double* grad_T_seq,
+    const double* spike_seq,
+    const double* T_seq,
+    const double* H_seq,
+    const double* v_th,
+    const double* T_max,
+    const double* T_min,
+    double* grad_x_seq,
+    int batch_size,
+    int time_steps,
+    int features
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= batch_size * features) return;
+    
+    double grad_V = 0.0;
+    double grad_T = 0.0;
+    
+    // Corrected loop bounds: from time_steps to 1
+    for (int t = time_steps; t >= 1; t--) {
+        int current_idx = (t * batch_size * features) + idx;
+        int prev_idx = ((t-1) * batch_size * features) + idx;  // For accessing T_{t-1}
+        
+        double H_t = H_seq[current_idx];
+        double T_t_1 = T_seq[prev_idx];  // Corrected indexing for T_{t-1}
+        double grad_Y_t = grad_spike_seq[current_idx - batch_size * features];
+        
+        double grad_T_t_to_H_t = theta_backward_fp64(H_t - v_th[0], v_th[0], T_t_1, T_min[0], T_max[0]) * theta_fp64(T_max[0] - T_t_1) +
+                                theta_backward_fp64(-H_t,v_th[0], T_t_1, T_min[0], T_max[0]) * theta_fp64(T_t_1 - T_min[0]);
+
+        double grad_Y_t_to_T_t_1 = -(theta_eq_fp64(H_t - v_th[0]) * theta_backward_fp64(T_max[0] - T_t_1,1.0, T_t_1, T_min[0], T_max[0]) +
+                                    theta_fp64(-H_t) * theta_backward_fp64(T_t_1 - T_min[0],1.0, T_t_1, T_min[0], T_max[0]));
+        
+        double grad_X = (grad_Y_t - v_th[0] * grad_V + grad_T) * grad_T_t_to_H_t + grad_V;
+        grad_T = (grad_Y_t - v_th[0] * grad_V + grad_T) * grad_Y_t_to_T_t_1 + grad_T;
+        grad_V = grad_X;
+        
+        grad_x_seq[current_idx - batch_size * features] = grad_X;  // Adjust index for output
     }
 }
 

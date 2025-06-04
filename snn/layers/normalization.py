@@ -83,11 +83,11 @@ class spiking_BatchNorm2d(nn.Module):
                 input = input.unsqueeze(1)
             if self.input_allcate:
                 input = input.transpose(-1, -2)
-                output = F.batch_norm(input=input, running_mean=self.bn.running_mean.detach()*self.input_allocator[self.fire_time].detach(), running_var=self.bn.running_var, weight=self.bn.weight, bias=self.bn.bias*self.input_allocator[self.fire_time], eps=self.eps)
+                output = F.batch_norm(input=input, running_mean=self.bn.running_mean.detach()*self.input_allocator[self.fire_time].detach(), running_var=self.bn.running_var, weight=self.bn.weight, bias=self.bn.bias*self.input_allocator[self.fire_time], training=False, eps=self.eps)
                 output = output.transpose(-1, -2)
             else:
                 input = input.transpose(-1, -2)
-                output = F.batch_norm(input=input, running_mean=self.bn.running_mean.detach()/self.level, running_var=self.bn.running_var, weight=self.bn.weight, bias=self.bn.bias/self.level, eps=self.eps)
+                output = F.batch_norm(input=input, running_mean=self.bn.running_mean.detach()/self.level, running_var=self.bn.running_var, weight=self.bn.weight, bias=self.bn.bias/self.level, training=False, eps=self.eps)
                 output = output.transpose(-1, -2)
             if input_shape == 2:
                 output = output.squeeze(1)
@@ -103,7 +103,7 @@ class spiking_BatchNorm2d(nn.Module):
             if input_shape == 2:
                 input = input.unsqueeze(1)
             input = input.transpose(-1, -2)
-            output = F.batch_norm(input=input, running_mean=self.bn.running_mean.detach(), running_var=self.bn.running_var, weight=self.bn.weight, bias=None, eps=self.eps)
+            output = F.batch_norm(input=input, running_mean=self.bn.running_mean.detach(), running_var=self.bn.running_var, weight=self.bn.weight, bias=None, training=False, eps=self.eps)
             output = output.transpose(-1, -2)
             if input_shape == 2:
                 output = output.squeeze(1)
@@ -173,7 +173,7 @@ class SpikingBatchNorm2d_MS(nn.Module):
             self.bn.running_var,
             self.bn.weight,
             self.bn.bias,
-            self.bn.training,
+            self.training,  # 使用当前模块的training状态，而不是self.bn.training
             self.bn.momentum,
             self.bn.eps
         ) if B*self.steps > 0 else input.new_tensor([])
@@ -185,7 +185,7 @@ class SpikingBatchNorm2d_MS(nn.Module):
             self.bn.running_var,
             self.bn.weight,
             None,  # 无bias
-            self.bn.training,
+            self.training,  # 使用当前模块的training状态，而不是self.bn.training
             self.bn.momentum,
             self.bn.eps
         ) if input.shape[0] > B*self.steps else input.new_tensor([])

@@ -5,6 +5,7 @@ This module contains the main SNN wrapper classes for converting
 ANN/QANN models to temporal spiking neural networks.
 """
 
+from networkx import from_nested_tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,6 +14,9 @@ from copy import deepcopy
 
 # Import SNN components
 from snn.neurons import ST_BIFNeuron_MS, IFNeuron, ORIIFNeuron
+# from snn.neurons import IFNeuron, ORIIFNeuron
+# from snn.neurons import ST_BIFNeuron_MS
+# from snn.neurons.st_bif_optimized import ST_BIFNeuron_MS_Optimized as ST_BIFNeuron_MS
 from snn.layers import (
     MyQuan, LLConv2d_MS, LLLinear_MS, QuanConv2d, QuanLinear,
     SpikingBatchNorm2d_MS, MyBatchNorm1d, Spiking_LayerNorm,
@@ -90,7 +94,7 @@ class SNNWrapper_MS(nn.Module):
         
         # Debug information
         print("=====================")
-        print("self.model", self.model)
+        # print("self.model", self.model)
         print("self.model_name", self.model_name)
         print("self.kwargs", self.kwargs)
         print("self.T:", self.T)
@@ -250,6 +254,30 @@ class SNNWrapper_MS(nn.Module):
             if not is_need:            
                 self._replace_weight(child)
 
+    def _reset_all_states(self):
+        """Reset all neuron and layer states in the model"""
+        def _reset_module(module):
+            # Reset specific layer types
+            if hasattr(module, 'reset'):
+                module.reset()
+            # Handle specific neuron types
+            elif hasattr(module, 'v'):  # Neuron with membrane potential
+                if isinstance(module.v, (int, float)):
+                    module.v = 0
+                elif hasattr(module.v, 'zero_'):
+                    module.v.zero_()
+            elif hasattr(module, 'mem'):  # Neuron with memory
+                if isinstance(module.mem, (int, float)):
+                    module.mem = 0
+                elif hasattr(module.mem, 'zero_'):
+                    module.mem.zero_()
+            
+            # Recursively reset children
+            for child in module.children():
+                _reset_module(child)
+        
+        _reset_module(self.model)
+
     def forward(self, x, verbose=False):
         """
         Forward pass through the SNN
@@ -261,6 +289,9 @@ class SNNWrapper_MS(nn.Module):
         Returns:
             SNN output (accumulated over time steps)
         """
+        # Reset all neuron and layer states before each forward pass
+        self._reset_all_states()
+        
         input = get_subtensors(x, 0.0, 0.0, sample_grain=self.step, time_step=self.T)  
         
         T, B, C, H, W = input.shape
