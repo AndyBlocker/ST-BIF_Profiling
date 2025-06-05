@@ -39,6 +39,21 @@ python profile/scripts/snn_profiler.py --method benchmark --steps 100
 python profile/scripts/snn_profiler.py --method all
 ```
 
+#### CUDA Kernel Comparison
+```bash
+# Compare original vs new CUDA kernels
+python profile/scripts/cuda_kernel_profiler.py
+
+# Custom configuration
+python profile/scripts/cuda_kernel_profiler.py --bs 32 --runs 10 --features 512,1024
+
+# Test specific precisions
+python profile/scripts/cuda_kernel_profiler.py --precisions fp32,fp16
+
+# Skip backward pass testing
+python profile/scripts/cuda_kernel_profiler.py --no-backward
+```
+
 #### NVIDIA Nsight Systems
 ```bash
 # GPU timeline profiling
@@ -56,8 +71,8 @@ python profile/scripts/snn_profiler.py --method all
 # Focus on SNN kernels only
 ./profile/scripts/ncu_profile.sh --snn-kernels
 
-# Custom kernel filtering
-./profile/scripts/ncu_profile.sh --kernel-regex ".*conv.*"
+# Kernel comparison with NCU
+./profile/scripts/ncu_kernel_comparison.sh
 ```
 
 ## Analysis Workflow
@@ -94,6 +109,14 @@ python profile/scripts/snn_profiler.py --method all --steps 100
 - Memory bandwidth utilization
 - Register usage optimization
 
+### 5. CUDA Kernel Comparison
+```bash
+python profile/scripts/cuda_kernel_profiler.py
+```
+- Equivalence testing between kernel versions
+- Latency and memory usage comparison
+- Multi-precision performance analysis
+
 ## Key Metrics to Watch
 
 ### SNN Performance Indicators
@@ -101,6 +124,12 @@ python profile/scripts/snn_profiler.py --method all --steps 100
 - **Backward Time**: Typically 70-80% of total  
 - **Memory Usage**: Peak allocation during backward pass
 - **ST-BIF Operations**: Custom neuron kernel efficiency
+
+### CUDA Kernel Metrics
+- **Latency**: Execution time per kernel call (ms)
+- **Memory Usage**: Peak GPU memory consumption (MB)
+- **Equivalence**: Numerical accuracy between kernel versions
+- **Precision Impact**: Performance differences across fp32/fp16
 
 ### Typical Performance Profile
 ```
@@ -136,6 +165,18 @@ python profile/scripts/snn_profiler.py --level 8 --method benchmark
 python profile/scripts/snn_profiler.py --level 16 --method benchmark
 ```
 
+### 4. CUDA Kernel Optimization
+```bash
+# Test different feature dimensions
+python profile/scripts/cuda_kernel_profiler.py --features 256,512,1024,2048
+
+# Test different time steps
+python profile/scripts/cuda_kernel_profiler.py --ts 4,8,16,32
+
+# Memory-focused analysis
+python profile/scripts/cuda_kernel_profiler.py --bs 16 --runs 20
+```
+
 ## Viewing Results
 
 ### PyTorch Profiler Results
@@ -146,6 +187,16 @@ python profile/scripts/snn_profiler.py --level 16 --method benchmark
 # Text reports
 cat profile/outputs/torch_profile_*.txt
 cat profile/outputs/benchmark_*.txt
+```
+
+### CUDA Kernel Comparison Results
+```bash
+# Performance comparison charts
+# View profile/outputs/cuda_kernel_*/latency_comparison.png
+# View profile/outputs/cuda_kernel_*/memory_comparison.png
+
+# Detailed results JSON
+cat profile/outputs/cuda_kernel_*/results.json
 ```
 
 ### NVIDIA Tools Results
