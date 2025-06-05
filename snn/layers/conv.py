@@ -90,11 +90,22 @@ class LLConv2d_MS(nn.Module):
         # print("LLConv2d_MS input.shape",input.shape)
         B = input.shape[0]//self.T
         
-        # print("LLConv2d_MS.input",input.reshape(torch.Size([self.T,B])+input.shape[1:]).sum(dim=0).abs().mean())
-        # print("LLConv2d_MS.steps",self.steps,"B",B,"self.T",self.T)
-        output = torch.cat([nn.functional.conv2d(input[:B*self.steps], self.conv.weight, self.conv.bias, stride=self.conv.stride, padding=self.conv.padding, dilation=self.conv.dilation, groups=self.conv.groups),\
-                            nn.functional.conv2d(input[B*self.steps:], self.conv.weight, stride=self.conv.stride, padding=self.conv.padding, dilation=self.conv.dilation, groups=self.conv.groups)], dim=0)
-        # print("LLConv2d_MS.output",output.reshape(torch.Size([self.T,B])+output.shape[1:]).sum(dim=0).abs().mean())
-        # print("LLConv2d_MS output.sum(dim=0).abs().mean()",output.sum(dim=0).abs().mean())
-        # print("LLConv2d_MS output.shape",output.shape)
-        return output
+        # # print("LLConv2d_MS.input",input.reshape(torch.Size([self.T,B])+input.shape[1:]).sum(dim=0).abs().mean())
+        # # print("LLConv2d_MS.steps",self.steps,"B",B,"self.T",self.T)
+        # output = torch.cat([nn.functional.conv2d(input[:B*self.steps], self.conv.weight, self.conv.bias, stride=self.conv.stride, padding=self.conv.padding, dilation=self.conv.dilation, groups=self.conv.groups),\
+        #                     nn.functional.conv2d(input[B*self.steps:], self.conv.weight, stride=self.conv.stride, padding=self.conv.padding, dilation=self.conv.dilation, groups=self.conv.groups)], dim=0)
+        # # print("LLConv2d_MS.output",output.reshape(torch.Size([self.T,B])+output.shape[1:]).sum(dim=0).abs().mean())
+        # # print("LLConv2d_MS output.sum(dim=0).abs().mean()",output.sum(dim=0).abs().mean())
+        # # print("LLConv2d_MS output.shape",output.shape)
+        # return output
+    
+        y = F.conv2d(input, self.conv.weight, None,
+                    stride=self.conv.stride,
+                    padding=self.conv.padding,
+                    dilation=self.conv.dilation,
+                    groups=self.conv.groups)
+
+        if self.conv.bias is not None and self.steps > 0:
+            bias = self.conv.bias.view(1, -1, 1, 1)  
+            y[:B * self.steps].add_(bias)
+        return y

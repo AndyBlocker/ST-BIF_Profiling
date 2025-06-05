@@ -32,7 +32,7 @@ echo "  3. nsys_profiling_summary_*.txt - human-readable summary"
 echo ""
 
 nsys profile \
-  -o ${OUTPUT_FILE} \
+  -o ../outputs/nsys_results/${OUTPUT_FILE} \
   --force-overwrite=true \
   --trace=cuda,nvtx,osrt,cublas,cusparse,cudnn,openacc,openmp,mpi,ucx \
   --sample=system-wide \
@@ -46,6 +46,16 @@ nsys profile \
   --stats=true \
   python nsys_snn_profiling.py
 
+# nsys profile -o ../outputs/nsys_results/${OUTPUT_FILE} \
+#   --trace=cuda,nvtx \
+#   --capture-range=nvtx --capture-range-end=stop \
+#   --cuda-event-trace=false \
+#   --gpu-metrics-devices=none \
+#   --sample=none --event-sample=none \
+#   --stats=true \
+#   python nsys_snn_profiling.py
+
+
 
 # Check if profiling was successful
 if [ $? -eq 0 ]; then
@@ -53,9 +63,9 @@ if [ $? -eq 0 ]; then
     echo "✓ Profiling completed successfully!"
     echo ""
     echo "Generated files:"
-    ls -la ${OUTPUT_FILE}.nsys-rep 2>/dev/null && echo "  - ${OUTPUT_FILE}.nsys-rep (nsys GUI file)"
-    ls -la nsys_profiling_results_*.json 2>/dev/null | tail -1 | awk '{print "  - " $9 " (detailed JSON data)"}'
-    ls -la nsys_profiling_summary_*.txt 2>/dev/null | tail -1 | awk '{print "  - " $9 " (summary report)"}'
+    ls -la ../outputs/nsys_results/${OUTPUT_FILE}.nsys-rep 2>/dev/null && echo "  - ${OUTPUT_FILE}.nsys-rep (nsys GUI file)"
+    ls -la ../outputs/nsys_results/nsys_profiling_results_*.json 2>/dev/null | tail -1 | awk '{print "  - " $9 " (detailed JSON data)"}'
+    ls -la ../outputs/nsys_results/nsys_profiling_summary_*.txt 2>/dev/null | tail -1 | awk '{print "  - " $9 " (summary report)"}'
     
     echo ""
     echo "To view in Nsight Systems GUI:"
@@ -70,7 +80,7 @@ if [ $? -eq 0 ]; then
     echo ""
     
     # Show summary if available
-    SUMMARY_FILE=$(ls -t nsys_profiling_summary_*.txt 2>/dev/null | head -1)
+    SUMMARY_FILE=$(ls -t ../outputs/nsys_results/nsys_profiling_summary_*.txt 2>/dev/null | head -1)
     if [ -f "$SUMMARY_FILE" ]; then
         echo "Quick Summary:"
         echo "=============="

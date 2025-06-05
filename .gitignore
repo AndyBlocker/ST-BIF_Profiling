@@ -12,6 +12,8 @@ __pycache__/
 # checkpoints/
 
 # Output directories
+output/
+outputs/
 output_*/
 
 # ST-BIF Profiling outputs (large files)
@@ -27,3 +29,4 @@ snn_profile_*
 
 # Temporary profiling files
 /tmp/nsys-report-*
+

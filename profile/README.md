@@ -14,29 +14,30 @@ The profiling suite supports three major profiling methods:
 
 ```
 profile/
-├── scripts/                    # Profiling scripts
-│   ├── snn_profiler.py        # Main Python profiler
-│   ├── nsys_profile.sh        # Nsight Systems wrapper
-│   ├── ncu_profile.sh         # Nsight Compute wrapper
-│   └── run_all_profiles.sh    # Master script
-├── configs/                   # Configuration files
-│   └── profile_config.yaml    # Profiling parameters
-├── outputs/                   # Profiling results (auto-created)
-└── README.md                  # This file
+├── README.md                    # This file (overview and quick start)
+├── USAGE.md                     # Detailed usage guide
+├── NSYS_PROFILING_GUIDE.md     # NSYS-specific analysis guide
+├── analysis_report.md           # Analysis report template
+├── scripts/                     # Profiling scripts
+│   ├── nsys_snn_profiling.py   # NSYS-specific SNN analysis
+│   └── run_nsys_profiling.sh   # NSYS execution script
+├── configs/                     # Configuration files
+│   └── profile_config.yaml     # Profiling parameters
+└── outputs/                     # Profiling results (auto-created)
+    └── nsys_results/           # NSYS-specific results
 ```
 
 ## Quick Start
 
-### Run All Profiling Methods
+### NSYS Profiling (唯一有效的分析工具)
 ```bash
-# Comprehensive profiling with default settings
-./profile/scripts/run_all_profiles.sh
+# NSYS详细GPU分析（推荐）
+cd profile/scripts
+./run_nsys_profiling.sh
 
-# Quick profiling for rapid iteration
-./profile/scripts/run_all_profiles.sh --quick
-
-# Thorough profiling for detailed analysis
-./profile/scripts/run_all_profiles.sh --thorough
+# 或者手动运行
+cd profile/scripts  
+python nsys_snn_profiling.py
 ```
 
 ### Individual Profiling Methods
@@ -56,12 +57,12 @@ python profile/scripts/snn_profiler.py --method benchmark --steps 100
 python profile/scripts/snn_profiler.py --method all
 ```
 
-#### 2. NVIDIA Nsight Systems
+#### 2. NVIDIA Nsight Systems (NVTX)
 ```bash
-# GPU timeline profiling
-./profile/scripts/nsys_profile.sh
+# Detailed SNN profiling with NVTX markers
+./profile/scripts/run_nsys_profiling.sh
 
-# Custom parameters
+# Alternative basic nsys profiling
 ./profile/scripts/nsys_profile.sh --batch-size 64 --steps 200
 ```
 

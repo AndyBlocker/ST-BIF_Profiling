@@ -30,7 +30,7 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
 
         # ① 相对于当前 .py 的固定位置
         here = Path(__file__).resolve().parent
-        candidates.append(here / "neuron_cupy" / "cuda_snn_kernels.cu")
+        candidates.append(here / "neuron_cupy" / "cuda_snn_kernels_new.cu")
 
         # ② 开发者可通过环境变量覆盖
         env_path = os.getenv("CUDA_SNN_KERNELS_PATH")
@@ -39,7 +39,7 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
 
         # ③ 已打包的资源路径（importlib.resources 在 Py≥3.9 支持 pathlib API）
         try:
-            resource_path = pkg_resources.files("neuron_cupy") / "cuda_snn_kernels.cu"
+            resource_path = pkg_resources.files("neuron_cupy") / "cuda_snn_kernels_new.cu"
             candidates.append(resource_path)
         except ModuleNotFoundError:
             # 如果包本身不存在（纯源码工程时也可能发生），直接跳过
@@ -65,8 +65,15 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
         ST_BIFNodeATGF_MS_CUDA.cuda_source = cuda_code
 
         # ── 3. 编译并缓存 CUDA RawModule ───────────────────────
-        #    如果需要特殊编译选项，可在 options/disable_cooperative 等处调整
-        module = cp.RawModule(code=cuda_code, options=("--std=c++14",))
+        # 添加优化选项
+        module = cp.RawModule(
+            code=cuda_code, 
+            options=(
+                "--std=c++14",
+                "-use_fast_math",  # 使用快速数学函数
+                "--ptxas-options=-v",  # 查看寄存器使用情况
+            )
+        )
 
         for precision in ("fp16", "fp32", "fp64"):
             setattr(
@@ -79,20 +86,6 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
                 f"backward_kernel_{precision}",
                 module.get_function(f"backward_kernel_{precision}"),
             )
-
-    # def _load_cuda_kernels():
-    #     if ST_BIFNodeATGF_MS_CUDA.cuda_source is None:
-    #         with open('./neuron_cupy/cuda_snn_kernels.cu', 'r') as f:
-    #             ST_BIFNodeATGF_MS_CUDA.cuda_source = f.read()
-                
-    #         # Load CUDA kernels into CuPy
-    #         module = cp.RawModule(code=ST_BIFNodeATGF_MS_CUDA.cuda_source)
-    #         ST_BIFNodeATGF_MS_CUDA.forward_kernel_fp32 = module.get_function('forward_kernel_fp32')
-    #         ST_BIFNodeATGF_MS_CUDA.backward_kernel_fp32 = module.get_function('backward_kernel_fp32')
-    #         ST_BIFNodeATGF_MS_CUDA.forward_kernel_fp16 = module.get_function('forward_kernel_fp16')
-    #         ST_BIFNodeATGF_MS_CUDA.backward_kernel_fp16 = module.get_function('backward_kernel_fp16')
-    #         ST_BIFNodeATGF_MS_CUDA.forward_kernel_fp64 = module.get_function('forward_kernel_fp64')
-    #         ST_BIFNodeATGF_MS_CUDA.backward_kernel_fp64 = module.get_function('backward_kernel_fp64')
 
     @staticmethod
     def forward(ctx, x_seq: torch.Tensor, v_th: torch.Tensor, T_max: torch.Tensor, T_min: torch.Tensor, prefire: torch.Tensor):
@@ -138,15 +131,19 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
         T_seq_cp = cp.from_dlpack(to_dlpack(T_seq_out.contiguous()))
         H_seq_cp = cp.from_dlpack(to_dlpack(H_seq_out.contiguous()))
         
-        # Launch kernel
-        threads_per_block = 256
+        # 优化的线程块配置
+        threads_per_block = 128  # 减少到128以提高occupancy
         blocks = (batch_size * features_flat + threads_per_block - 1) // threads_per_block
+        
+        # 设置动态共享内存大小
+        shared_mem_size = threads_per_block * 4 * 4  # 每个线程4个float值
         
         forward_kernel(
             (blocks,), (threads_per_block,),
             (x_seq_cp, v_th_cp, T_max_cp, T_min_cp, prefire_cp,
              spike_seq_cp, v_out_cp, T_seq_cp, H_seq_cp,
-             batch_size, time_steps, features_flat)
+             batch_size, time_steps, features_flat),
+            shared_mem=shared_mem_size
         )
         
         # Convert back to PyTorch - create fresh copies to avoid capsule reuse
@@ -155,8 +152,6 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
         T_seq = T_seq_out.clone()
         H_seq = H_seq_out.clone()
         
-        # print("ST_BIFNodeATGF_MS_CUDA:", spike_seq.dtype, H_seq.dtype, T_seq.dtype, x_seq.dtype, v_th.dtype, T_max.dtype, T_min.dtype)
-
         ctx.save_for_backward(spike_seq, T_seq, H_seq, v_th, T_max, T_min)
         ctx.is_double = is_double
         ctx.is_half = is_half
@@ -195,9 +190,12 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
         T_min_cp = cp.from_dlpack(to_dlpack(T_min.contiguous()))
         grad_x_seq_cp = cp.from_dlpack(to_dlpack(grad_x_seq.contiguous()))
         
-        # Launch kernel
-        threads_per_block = 256
+        # 优化的线程块配置
+        threads_per_block = 128
         blocks = (batch_size * features_flat + threads_per_block - 1) // threads_per_block
+        
+        # 设置动态共享内存大小
+        shared_mem_size = threads_per_block * 6 * 4  # 每个线程6个float值
         
         backward_kernel(
             (blocks,), (threads_per_block,),
@@ -205,28 +203,11 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
              spike_seq_cp, T_seq_cp, H_seq_cp,
              v_th_cp, T_max_cp, T_min_cp,
              grad_x_seq_cp,
-             batch_size, time_steps, features_flat)
+             batch_size, time_steps, features_flat),
+            shared_mem=shared_mem_size
         )
         
         # Convert back to PyTorch - use original tensor to avoid capsule reuse
         grad_x = grad_x_seq.clone()
         
-        # print("ST_BIFNodeATGF_MS_CUDA Backward:", grad_x_seq.dtype, grad_v_cp.dtype, grad_T_seq_cp.dtype, spike_seq_cp.dtype, spike_seq.dtype, H_seq.dtype, T_seq.dtype, v_th.dtype, T_max.dtype, T_min.dtype)
-
-        # global first
-        # if first:
-        #     print('=================================================================')
-        #     # print("v_th",v_th)
-        #     # ST_BIFNodeATGF_MS_CUDA.v_thr1 = ST_BIFNodeATGF_MS_CUDA.v_thr1 + v_th
-        #     # ST_BIFNodeATGF_MS_CUDA.count = ST_BIFNodeATGF_MS_CUDA.count + 1
-        #     # print("vthr Sum",ST_BIFNodeATGF_MS_CUDA.v_thr1, "count", ST_BIFNodeATGF_MS_CUDA.count)
-            
-        #     for t in range(4):
-        #         print("t=",t+1)
-        #         print("H_seq_cp",H_seq[t+1].abs().mean())
-        #         print("grad_x",grad_x[t].abs().mean())
-        #         print("grad_spike_seq",grad_spike_seq[t].abs().mean())
-        #         print("grad_x/grad_spike_seq",(torch.abs(grad_x)/(torch.abs(grad_spike_seq)+1e-5))[t].abs().mean())
-        #     first = False 
-            
         return grad_x, None, None, None, None

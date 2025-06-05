@@ -166,37 +166,61 @@ class SpikingBatchNorm2d_MS(nn.Module):
     def forward(self, input):
         B = input.shape[0] // self.T  # 批次大小
         
+        # 1) 一次 BN，不加 bias
+        y = F.batch_norm(
+            input,
+            self.bn.running_mean,
+            self.bn.running_var,
+            self.bn.weight,
+            None,                 # bias 先留空
+            self.training,
+            self.bn.momentum,
+            self.bn.eps
+        )
+
+        # 2) 前半段加回原 bias
+        if self.steps > 0 and self.bn.bias is not None:
+            y[:B*self.steps].add_(self.bn.bias.view(1, -1, 1, 1))
+
+        # 3) 后半段补偿 +μw/σ
+        if B*self.steps < input.shape[0]:
+            std = torch.sqrt(self.bn.running_var + self.bn.eps)
+            comp = (self.bn.weight * self.bn.running_mean) / std        # shape [C]
+            y[B*self.steps:].add_(comp.view(1, -1, 1, 1))
+
+        return y
+        
         # 第一部分：应用带有缩放过的bias的BatchNorm
-        first_part = F.batch_norm(
-            input[:B*self.steps],
-            self.bn.running_mean,  
-            self.bn.running_var,
-            self.bn.weight,
-            self.bn.bias,
-            self.training,  # 使用当前模块的training状态，而不是self.bn.training
-            self.bn.momentum,
-            self.bn.eps
-        ) if B*self.steps > 0 else input.new_tensor([])
+        # first_part = F.batch_norm(
+        #     input[:B*self.steps],
+        #     self.bn.running_mean,  
+        #     self.bn.running_var,
+        #     self.bn.weight,
+        #     self.bn.bias,
+        #     self.training,  # 使用当前模块的training状态，而不是self.bn.training
+        #     self.bn.momentum,
+        #     self.bn.eps
+        # ) if B*self.steps > 0 else input.new_tensor([])
         
-        # 第二部分：应用没有bias的BatchNorm
-        second_part = F.batch_norm(
-            input[B*self.steps:],
-            torch.zeros_like(self.bn.running_mean).to(input.device),
-            self.bn.running_var,
-            self.bn.weight,
-            None,  # 无bias
-            self.training,  # 使用当前模块的training状态，而不是self.bn.training
-            self.bn.momentum,
-            self.bn.eps
-        ) if input.shape[0] > B*self.steps else input.new_tensor([])
+        # # 第二部分：应用没有bias的BatchNorm
+        # second_part = F.batch_norm(
+        #     input[B*self.steps:],
+        #     torch.zeros_like(self.bn.running_mean).to(input.device),
+        #     self.bn.running_var,
+        #     self.bn.weight,
+        #     None,  # 无bias
+        #     self.training,  # 使用当前模块的training状态，而不是self.bn.training
+        #     self.bn.momentum,
+        #     self.bn.eps
+        # ) if input.shape[0] > B*self.steps else input.new_tensor([])
         
-        # 拼接结果
-        if first_part.numel() > 0 and second_part.numel() > 0:
-            return torch.cat([first_part, second_part], dim=0)
-        elif first_part.numel() > 0:
-            return first_part
-        else:
-            return second_part
+        # # 拼接结果
+        # if first_part.numel() > 0 and second_part.numel() > 0:
+        #     return torch.cat([first_part, second_part], dim=0)
+        # elif first_part.numel() > 0:
+        #     return first_part
+        # else:
+        #     return second_part
 
 
 class MyBatchNorm1d(nn.BatchNorm1d):

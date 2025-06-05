@@ -55,47 +55,73 @@ class SpikeMaxPooling_MS(nn.Module):
         self.accumulation = None
         
     def forward(self, x):
-        # 每次前向传递开始时重置状态，避免不同批次大小的问题
-        self.reset()
+        # # 每次前向传递开始时重置状态，避免不同批次大小的问题
+        # self.reset()
         
-        total_batch = x.shape[0]
-        B = total_batch // self.T
-        device = x.device
+        # total_batch = x.shape[0]
+        # B = total_batch // self.T
+        # device = x.device
         
-        outputs = []
+        # outputs = []
         
-        # 按时间步处理
-        for t in range(self.T):
-            # 获取当前时间步的所有样本
-            t_start = t * B
-            t_end = (t + 1) * B
-            current_inputs = x[t_start:t_end]
+        # # 按时间步处理
+        # for t in range(self.T):
+        #     # 获取当前时间步的所有样本
+        #     t_start = t * B
+        #     t_end = (t + 1) * B
+        #     current_inputs = x[t_start:t_end]
             
-            # 更新累积和
-            if self.accumulation is None:
-                self.accumulation = current_inputs
-            else:
-                # 确保维度匹配
-                if self.accumulation.shape[0] != current_inputs.shape[0]:
-                    # 如果批次大小改变，重置累积状态
-                    self.accumulation = current_inputs
-                    self.prev_pooled_accum = None
-                else:
-                    self.accumulation = self.accumulation + current_inputs
+        #     # 更新累积和
+        #     if self.accumulation is None:
+        #         self.accumulation = current_inputs
+        #     else:
+        #         # 确保维度匹配
+        #         if self.accumulation.shape[0] != current_inputs.shape[0]:
+        #             # 如果批次大小改变，重置累积状态
+        #             self.accumulation = current_inputs
+        #             self.prev_pooled_accum = None
+        #         else:
+        #             self.accumulation = self.accumulation + current_inputs
             
-            # 计算当前累积和的maxpool结果
-            current_pooled = self.maxpool(self.accumulation)
+        #     # 计算当前累积和的maxpool结果
+        #     current_pooled = self.maxpool(self.accumulation)
             
-            # 计算输出
-            if self.prev_pooled_accum is None:
-                output = current_pooled
-            else:
-                output = current_pooled - self.prev_pooled_accum
+        #     # 计算输出
+        #     if self.prev_pooled_accum is None:
+        #         output = current_pooled
+        #     else:
+        #         output = current_pooled - self.prev_pooled_accum
             
-            # 更新前一个时间步的累积池化结果
-            self.prev_pooled_accum = current_pooled
+        #     # 更新前一个时间步的累积池化结果
+        #     self.prev_pooled_accum = current_pooled
             
-            outputs.append(output)
+        #     outputs.append(output)
         
-        # 拼接所有时间步的输出
-        return torch.cat(outputs, dim=0) if outputs else x.new_tensor([])
+        # # 拼接所有时间步的输出
+        # return torch.cat(outputs, dim=0) if outputs else x.new_tensor([])
+        B = x.shape[0] // self.T
+        # 形状: [T, B, C, H, W] （先确保张量是 contiguous，避免后续 view 警告）
+        x_time = x.view(self.T, B, *x.shape[1:])
+
+        # -------- 2. 按时间维度做累积和 --------
+        # acc[t] = Σ_{τ<=t} x[τ]
+        acc = torch.cumsum(x_time, dim=0)
+
+        # -------- 3. 对累积和一次性做 max-pool --------
+        # 先把 [T, B] 合并到 batch 维，再还原
+        acc_flat     = acc.flatten(0, 1)                       # [T*B, C, H, W]
+        pooled_flat  = self.maxpool(acc_flat)                  # [T*B, C, H', W']
+        pooled       = pooled_flat.view(self.T, B, *pooled_flat.shape[1:])
+
+        # -------- 4. 时间差分得到输出 --------
+        # out[0] = pooled[0]
+        # out[t] = pooled[t] − pooled[t-1] (t>0)
+        first_step = pooled[0].unsqueeze(0)                    # shape [1, B, ...]
+        if self.T > 1:
+            diff = pooled[1:] - pooled[:-1]                   # shape [T-1, B, ...]
+            out = torch.cat((first_step, diff), dim=0)        # shape [T, B, ...]
+        else:                                                 # 虽然已在 if T==1 处理，但保持健壮性
+            out = first_step
+
+        # -------- 5. 恢复为 [T*B, ...] 输出 --------
+        return out.flatten(0, 1)
