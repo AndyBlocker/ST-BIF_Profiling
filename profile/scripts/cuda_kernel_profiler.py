@@ -74,24 +74,33 @@ class CUDAKernelProfiler:
         key = (F, dtype)
         if key not in self._data_cache:
             torch.manual_seed(42)
-            self._data_cache[key] = torch.randn(self.bs * max_T, F,
+            self._data_cache[key] = 10 * torch.randn(self.bs * max_T, F,
                                                 device=self.dev, dtype=dtype)
         return self._data_cache[key]
 
     # ─── 构造神经元 ────────────────────────────────────────────────────
     def _build_neuron(self, T: int, dtype: torch.dtype, use_new: bool):
-        n = ST_BIFNeuron_MS(torch.tensor(1.0, dtype=dtype, device=self.dev),
+        n = ST_BIFNeuron_MS(torch.tensor(0.5, dtype=dtype, device=self.dev),
                             level=8, sym=True, first_neuron=True).to(dtype)
         n.T = T
+        
+        # 修复：确保pos_max和neg_min也转换为正确的dtype
+        n.pos_max = n.pos_max.to(dtype)
+        n.neg_min = n.neg_min.to(dtype)
+        n.prefire = n.prefire.to(dtype)
 
         if use_new:
             import types
 
             def fwd(self, x):
                 N = x.size(0)
+                # 修复：确保所有参数都是正确的dtype
                 spk, _, _ = NewKernel.apply(
                     x.view(T, N // T, -1).flatten(2),
-                    self.q_threshold, self.pos_max, self.neg_min, self.prefire
+                    self.q_threshold, 
+                    self.pos_max.to(dtype), 
+                    self.neg_min.to(dtype), 
+                    self.prefire.to(dtype)
                 )
                 return spk.view_as(x) * self.q_threshold
 
@@ -102,7 +111,7 @@ class CUDAKernelProfiler:
     # ─── 等效性检查 ────────────────────────────────────────────────────
     def _equiv(self, T: int, F: int, prec: str):
         if not (original_available and new_available):
-            return
+            return True  # 只有一个内核时认为相同
 
         dtype = self._DTYPE[prec]
         atol, rtol = self._ATOL[prec], self._RTOL[prec]
@@ -121,6 +130,45 @@ class CUDAKernelProfiler:
         ok = md <= atol or md <= rtol * oa.abs().max().item()
         tag = "\033[32m✓" if ok else "\033[31m✗"
         print(f"      等效性 {tag} (max={md:.2e}, mean={mean:.2e})")
+        
+        # 如果不相同，输出详细对比信息
+        if not ok:
+            print(f"\n🚨 首次发现不等效结果! T={T}, F={F}, 精度={prec}")
+            print(f"差异统计:")
+            print(f"  • 最大差异: {md:.6e}")
+            print(f"  • 平均差异: {mean:.6e}")
+            print(f"  • 容差阈值: atol={atol:.2e}, rtol={rtol:.2e}")
+            
+            print(x.dtype)
+            
+            # 统计不同的数量而非均值
+            total_elements = oa.numel()
+            different_elements = (diff > atol).sum().item()
+            different_ratio = different_elements / total_elements * 100
+            
+            print(f"  • 不同元素数量: {different_elements}/{total_elements} ({different_ratio:.2f}%)")
+            print(f"  • 原始结果统计: min={oa.min():.6e}, max={oa.max():.6e}, std={oa.std():.6e}")
+            print(f"  • 新版结果统计: min={ob.min():.6e}, max={ob.max():.6e}, std={ob.std():.6e}")
+            
+            # 输出前几个不同的值示例
+            flat_oa = oa.flatten()
+            flat_ob = ob.flatten()
+            flat_diff = diff.flatten()
+            
+            # 找到差异最大的前10个位置
+            _, indices = torch.topk(flat_diff, min(10, total_elements))
+            print(f"\n前10个最大差异位置:")
+            print("    索引      原始值      新版值      差异值")
+            print("    " + "-" * 50)
+            for i, idx in enumerate(indices):
+                orig_val = flat_oa[idx].item()
+                new_val = flat_ob[idx].item()
+                diff_val = flat_diff[idx].item()
+                print(f"    {idx:6d}   {orig_val:10.6e}  {new_val:10.6e}  {diff_val:10.6e}")
+            
+            return False  # 标记为不相同
+            
+        return True  # 相同
 
     # ─── Profile 单 kernel / direction ────────────────────────────────
     def _profile(self, T: int, F: int, prec: str, kernel: str, direction: str):
@@ -190,17 +238,41 @@ class CUDAKernelProfiler:
         print(f"bs={self.bs}, runs={self.runs}, precisions={self.precisions}, "
               f"Ts={self.ts_list}, Fs={self.feats}, backward={self.do_backward}\n")
 
+        first_difference_found = False
+        
         for prec in self.precisions:
+            if first_difference_found:
+                break
+                
             print(f"── 精度 {prec} ───────────────────────────────────")
             for T in self.ts_list:
+                if first_difference_found:
+                    break
+                    
                 for F in self.feats:
+                    if first_difference_found:
+                        break
+                        
                     print(f"    T={T:2d}, F={F:4d}")
-                    self._equiv(T, F, prec)
-
+                    is_equivalent = self._equiv(T, F, prec)
+                    
+                    # 运行性能测试
                     for kernel in self.kernels:
                         self._profile(T, F, prec, kernel, "forward")
                         if self.do_backward:
                             self._profile(T, F, prec, kernel, "backward")
+                    
+                    # 如果发现不等效，输出完整结果后退出
+                    if not is_equivalent and len(self.kernels) >= 2:
+                        print(f"\n🎯 在首个不等效benchmark (T={T}, F={F}, {prec}) 处停止")
+                        print(f"📊 正在保存当前结果...")
+                        first_difference_found = True
+                        break
+        
+        if not first_difference_found:
+            print(f"\n✅ 所有测试配置都等效!")
+        
+        print(f"\n📈 总共收集了 {len(self.records)} 条性能记录")
 
     # ─── 保存 JSON + barplot PNG ──────────────────────────────────────
         # ─── 保存 JSON + barplot PNG ──────────────────────────────────────
@@ -292,8 +364,8 @@ def parse():
     )
     p.add_argument("--bs", type=int, default=32)
     p.add_argument("--runs", type=int, default=50)
-    p.add_argument("--features", nargs="+", type=int, default=[256, 512])
-    p.add_argument("--ts", nargs="+", type=int, default=[8, 16, 32])
+    p.add_argument("--features", nargs="+", type=int, default=[256, 512, 1024, 2048, 4096])
+    p.add_argument("--ts", nargs="+", type=int, default=[1, 2, 4, 8, 16, 32])
     p.add_argument("--precisions", nargs="+", choices=["fp64", "fp32", "fp16"],
                    default=["fp64", "fp32", "fp16"])
     p.add_argument("--no_backward", action="store_true",

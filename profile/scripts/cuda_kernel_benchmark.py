@@ -210,16 +210,23 @@ class ST_BIFKernelBenchmark:
     
     def save_results(self) -> None:
         """保存结果到文件"""
-        os.makedirs("../outputs/nsys_results", exist_ok=True)
+        # 使用路径管理器创建输出目录
+        import sys
+        from pathlib import Path
+        sys.path.append(str(Path(__file__).resolve().parents[2]))
+        
+        
+        
+        output_dir = Path(__file__).resolve().parent / ".." / "outputs" / "nsys_results"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # 保存详细JSON结果
-        json_path = f"../outputs/nsys_results/st_bif_benchmark_{timestamp}.json"
+        json_path = output_dir / f"st_bif_benchmark_{timestamp}.json"
         with open(json_path, 'w') as f:
             json.dump(self.results, f, indent=2)
         
         # 保存人类可读摘要
-        summary_path = f"../outputs/nsys_results/st_bif_benchmark_summary_{timestamp}.txt"
+        summary_path = output_dir / f"st_bif_benchmark_summary_{timestamp}.txt"
         with open(summary_path, 'w') as f:
             f.write("ST-BIF CUDA内核基准测试结果\n")
             f.write("=" * 40 + "\n\n")
