@@ -268,7 +268,14 @@ class ST_BIFNeuron_MS(nn.Module):
         
         # s_scale = grad_scale(self.q_threshold, s_grad_scale)
         # print("self.q_threshold",self.q_threshold.item())
-        spike_seq, v, T_seq = ST_BIFNodeATGF_MS_CUDA.apply(input.flatten(2), self.q_threshold, self.pos_max, self.neg_min, self.prefire)
+        
+        # Ensure all parameters have consistent dtype for CUDA kernel
+        input_dtype = input.dtype
+        pos_max_typed = self.pos_max.to(dtype=input_dtype)
+        neg_min_typed = self.neg_min.to(dtype=input_dtype)
+        prefire_typed = self.prefire.to(dtype=input_dtype)
+        
+        spike_seq, v, T_seq = ST_BIFNodeATGF_MS_CUDA.apply(input.flatten(2), self.q_threshold, pos_max_typed, neg_min_typed, prefire_typed)
         # self.q = v
         # print(self.q[self.q>0].mean())
         
