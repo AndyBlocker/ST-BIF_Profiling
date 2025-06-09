@@ -1,0 +1,808 @@
+{
+  "timestamp": "2025-06-09T16:05:15.005790",
+  "baseline_version": "ci/baselines/v1.0.0_current",
+  "tests": {
+    "import_integrity": {
+      "status": "passed",
+      "passed": true,
+      "execution_time": 1.5059170722961426,
+      "details": {
+        "tested_imports": 4
+      },
+      "message": "所有核心模块导入成功",
+      "baseline_comparison": {}
+    },
+    "basic_functionality": {
+      "status": "failed",
+      "passed": false,
+      "execution_time": 0.007990598678588867,
+      "details": {
+        "returncode": 1,
+        "stderr": "  File \"/home/zilingwei/Projects/ST-BIF_Profiling/ci/scripts/quick_validate.sh\", line 99\n    run_check \"model_loading\" \"python -c '\n                              ^\nSyntaxError: unterminated string literal (detected at line 99)\n"
+      },
+      "message": "基础功能验证失败",
+      "baseline_comparison": {}
+    },
+    "model_conversion_pipeline": {
+      "status": "failed",
+      "passed": false,
+      "execution_time": 6.256389141082764,
+      "details": {
+        "current_accuracy": {},
+        "execution_output": "level 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\nlevel 8\n=====================\nself.model_name resnet\nself.kwargs {'level': 8, 'neuron_type': 'ST-BIF', 'model_name': 'resnet', 'is_softmax': False, 'suppress_over_fire': False, 'record_inout': False, 'record_dir': '/home/zilingwei/output_bin_snn_resnet_w32_a4_T8/'}\nself.T: 8\nself.level: 8\nself.step: 3\n\n======================================================================\n📊 CONVERSION PIPELINE RESULTS\n======================================================================\nModel      Accuracy     Time (ms)    Speed      Acc Change  \n----------------------------------------------------------------------\nANN        86.74%     0.041       baseline   baseline    \nQANN       85.13%     0.078       0.52x      -1.61%      \nSNN        8"
+      },
+      "message": "无法解析模型精度信息",
+      "baseline_comparison": {}
+    },
+    "cuda_kernel_equivalence": {
+      "status": "failed",
+      "passed": false,
+      "execution_time": 1.4565672874450684,
+      "details": {
+        "returncode": 1,
+        "stderr": "",
+        "test_data": {
+          "total_tests": 26,
+          "passed_tests": 0,
+          "failed_tests": 26,
+          "test_details": [
+            {
+              "test_name": "fp32_B16_F64_T4",
+              "config": {
+                "precision": "fp32",
+                "batch_size": 16,
+                "feature_dim": 64,
+                "time_step": 4
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'contiguous'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp32_B16_F64_T8",
+              "config": {
+                "precision": "fp32",
+                "batch_size": 16,
+                "feature_dim": 64,
+                "time_step": 8
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'contiguous'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp32_B16_F128_T4",
+              "config": {
+                "precision": "fp32",
+                "batch_size": 16,
+                "feature_dim": 128,
+                "time_step": 4
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'contiguous'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp32_B16_F128_T8",
+              "config": {
+                "precision": "fp32",
+                "batch_size": 16,
+                "feature_dim": 128,
+                "time_step": 8
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'contiguous'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp32_B16_F256_T4",
+              "config": {
+                "precision": "fp32",
+                "batch_size": 16,
+                "feature_dim": 256,
+                "time_step": 4
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'contiguous'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp32_B16_F256_T8",
+              "config": {
+                "precision": "fp32",
+                "batch_size": 16,
+                "feature_dim": 256,
+                "time_step": 8
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'contiguous'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp32_B32_F32_T8",
+              "config": {
+                "precision": "fp32",
+                "batch_size": 32,
+                "feature_dim": 32,
+                "time_step": 8
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'contiguous'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp32_B32_F32_T16",
+              "config": {
+                "precision": "fp32",
+                "batch_size": 32,
+                "feature_dim": 32,
+                "time_step": 16
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'contiguous'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp32_B32_F64_T8",
+              "config": {
+                "precision": "fp32",
+                "batch_size": 32,
+                "feature_dim": 64,
+                "time_step": 8
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'contiguous'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp32_B32_F64_T16",
+              "config": {
+                "precision": "fp32",
+                "batch_size": 32,
+                "feature_dim": 64,
+                "time_step": 16
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'contiguous'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp32_B32_F128_T8",
+              "config": {
+                "precision": "fp32",
+                "batch_size": 32,
+                "feature_dim": 128,
+                "time_step": 8
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'contiguous'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp32_B32_F128_T16",
+              "config": {
+                "precision": "fp32",
+                "batch_size": 32,
+                "feature_dim": 128,
+                "time_step": 16
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'contiguous'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp32_B8_F512_T4",
+              "config": {
+                "precision": "fp32",
+                "batch_size": 8,
+                "feature_dim": 512,
+                "time_step": 4
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'contiguous'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp16_B16_F64_T4",
+              "config": {
+                "precision": "fp16",
+                "batch_size": 16,
+                "feature_dim": 64,
+                "time_step": 4
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'type'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp16_B16_F64_T8",
+              "config": {
+                "precision": "fp16",
+                "batch_size": 16,
+                "feature_dim": 64,
+                "time_step": 8
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'type'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp16_B16_F128_T4",
+              "config": {
+                "precision": "fp16",
+                "batch_size": 16,
+                "feature_dim": 128,
+                "time_step": 4
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'type'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp16_B16_F128_T8",
+              "config": {
+                "precision": "fp16",
+                "batch_size": 16,
+                "feature_dim": 128,
+                "time_step": 8
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'type'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp16_B16_F256_T4",
+              "config": {
+                "precision": "fp16",
+                "batch_size": 16,
+                "feature_dim": 256,
+                "time_step": 4
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'type'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp16_B16_F256_T8",
+              "config": {
+                "precision": "fp16",
+                "batch_size": 16,
+                "feature_dim": 256,
+                "time_step": 8
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'type'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp16_B32_F32_T8",
+              "config": {
+                "precision": "fp16",
+                "batch_size": 32,
+                "feature_dim": 32,
+                "time_step": 8
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'type'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp16_B32_F32_T16",
+              "config": {
+                "precision": "fp16",
+                "batch_size": 32,
+                "feature_dim": 32,
+                "time_step": 16
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'type'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp16_B32_F64_T8",
+              "config": {
+                "precision": "fp16",
+                "batch_size": 32,
+                "feature_dim": 64,
+                "time_step": 8
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'type'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp16_B32_F64_T16",
+              "config": {
+                "precision": "fp16",
+                "batch_size": 32,
+                "feature_dim": 64,
+                "time_step": 16
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'type'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp16_B32_F128_T8",
+              "config": {
+                "precision": "fp16",
+                "batch_size": 32,
+                "feature_dim": 128,
+                "time_step": 8
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'type'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp16_B32_F128_T16",
+              "config": {
+                "precision": "fp16",
+                "batch_size": 32,
+                "feature_dim": 128,
+                "time_step": 16
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'type'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            },
+            {
+              "test_name": "fp16_B8_F512_T4",
+              "config": {
+                "precision": "fp16",
+                "batch_size": 8,
+                "feature_dim": 512,
+                "time_step": 4
+              },
+              "original_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'type'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "new_kernel": {
+                "success": false,
+                "error": "'int' object has no attribute 'to'",
+                "execution_time": 0,
+                "memory_allocated": 0
+              },
+              "comparison": {
+                "equivalent": false,
+                "reason": "One or both kernels failed",
+                "result1_success": false,
+                "result2_success": false
+              },
+              "passed": false
+            }
+          ],
+          "summary": {
+            "all_tests_passed": false,
+            "pass_rate": 0.0,
+            "total_configs_tested": 78,
+            "has_new_kernel": true
+          }
+        }
+      },
+      "message": "CUDA内核等效性验证失败",
+      "baseline_comparison": {}
+    },
+    "cuda_kernel_performance": {
+      "status": "failed",
+      "passed": false,
+      "execution_time": 0.9168834686279297,
+      "details": {
+        "returncode": 1
+      },
+      "message": "CUDA性能测试执行失败: Traceback (most recent call last):\n  File \"/home/zilingwei/Projects/ST-BIF_Profiling/profile/scripts/cuda_kernel_benchmark.py\", line 29, in <module>\n    from neuron_cupy.cuda_operator import ST_BIFNodeATGF_MS_CUDA\nModuleNotFoundError: No module named 'neuron_cupy'\n",
+      "baseline_comparison": {}
+    }
+  },
+  "summary": {
+    "total_tests": 5,
+    "passed_tests": 1,
+    "failed_tests": 4,
+    "warning_tests": 0,
+    "overall_success": false,
+    "success_rate": 0.2
+  }
+}

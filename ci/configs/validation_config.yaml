@@ -1,0 +1,221 @@
+# ST-BIF CI/CD验证配置
+
+# 全局配置
+global:
+  project_root: "/home/zilingwei/Projects/ST-BIF_Profiling"
+  python_executable: "python"
+  cuda_required: true
+  timeout_default: 1800  # 30分钟默认超时
+
+# 验证层级配置
+validation_levels:
+  L0_quick:
+    enabled: true
+    timeout: 120  # 2分钟
+    parallel: true
+    description: "快速验证层：语法检查、导入测试、基础单元测试"
+    
+  L1_operator:
+    enabled: true
+    timeout: 600  # 10分钟
+    parallel: true
+    requires_cuda: true
+    description: "算子验证层：CUDA内核验证、数值等效性检查"
+    
+  L2_model:
+    enabled: true
+    timeout: 1200  # 20分钟
+    parallel: false
+    requires_cuda: true
+    requires_models: true
+    description: "模型验证层：完整转换流水线、精度回归检测"
+    
+  L3_performance:
+    enabled: true
+    timeout: 3600  # 60分钟
+    parallel: false
+    requires_cuda: true
+    requires_models: true
+    description: "性能验证层：基准测试、性能回归检测"
+    
+  L4_deep:
+    enabled: false  # 默认禁用，需手动开启
+    timeout: 7200  # 2小时
+    parallel: false
+    requires_cuda: true
+    requires_models: true
+    description: "深度验证层：长时间稳定性、内存泄漏检测"
+
+# 测试环境配置
+environments:
+  local_dev:
+    cuda_device: "auto"  # 自动检测
+    batch_sizes: [16, 32]
+    precision_levels: ["fp32"]
+    models: ["resnet18"]
+    
+  ci_server:
+    cuda_device: "cuda:0"
+    batch_sizes: [16, 32, 64]
+    precision_levels: ["fp16", "fp32"]
+    models: ["resnet18"]
+    
+  full_validation:
+    cuda_device: "cuda:0"
+    batch_sizes: [1, 16, 32, 64, 128]
+    precision_levels: ["fp16", "fp32", "fp64"]
+    models: ["resnet18", "resnet34"]
+
+# L0层配置：快速验证
+L0_quick:
+  checks:
+    code_style:
+      enabled: true
+      tools: ["flake8", "black --check"]
+      timeout: 30
+      
+    import_tests:
+      enabled: true
+      modules: 
+        - "snn"
+        - "models" 
+        - "wrapper"
+        - "utils"
+        - "neuron_cupy"
+      timeout: 60
+      
+    unit_tests:
+      enabled: true
+      test_dirs: ["tests/unit"]
+      timeout: 120
+      parallel: true
+
+# L1层配置：算子验证
+L1_operator:
+  cuda_kernels:
+    test_script: "neuron_cupy/test_snn_operator.py"
+    precision_tests: ["fp32", "fp16", "fp64"]
+    equivalence_check:
+      atol_fp64: 1e-7
+      rtol_fp64: 1e-5
+      atol_fp32: 1e-5
+      rtol_fp32: 1e-4
+      atol_fp16: 1e-3
+      rtol_fp16: 1e-2
+      
+  kernel_comparison:
+    enabled: true
+    old_kernel: "neuron_cupy/cuda_operator.py"
+    new_kernel: "neuron_cupy/cuda_operator_new.py"
+    test_configs:
+      - batch_size: 16
+        feature_dims: [64, 128, 256]
+        time_steps: [4, 8, 16]
+      - batch_size: 32
+        feature_dims: [32, 64, 128]
+        time_steps: [8]
+
+# L2层配置：模型验证
+L2_model:
+  conversion_pipeline:
+    script: "examples/ann_to_snn_conversion.py"
+    models:
+      resnet18:
+        ann_checkpoint: "checkpoints/resnet/best_ANN.pth"
+        qann_checkpoint: "checkpoints/resnet/best_QANN.pth"
+        batch_sizes: [16, 32]
+        
+  accuracy_thresholds:
+    ann_baseline: 86.74  # 基线ANN精度
+    qann_max_drop: 2.0   # QANN最大精度损失(%)
+    snn_max_drop: 2.5    # SNN最大精度损失(%)
+    
+  regression_detection:
+    enabled: true
+    baseline_file: "ci/baselines/model_accuracy_baseline.json"
+    max_regression: 0.5  # 最大允许精度回归(%)
+
+# L3层配置：性能验证
+L3_performance:
+  benchmark_tests:
+    script: "profile/scripts/quick_profile.sh"
+    iterations: 10
+    warmup_iterations: 3
+    
+  performance_thresholds:
+    inference_time:
+      max_regression: 10  # 最大推理时间回归(%)
+      baseline_file: "ci/baselines/performance_baseline.json"
+      
+    memory_usage:
+      max_increase: 15   # 最大内存使用增长(%)
+      baseline_file: "ci/baselines/memory_baseline.json"
+      
+    throughput:
+      min_samples_per_sec: 200  # 最小吞吐量
+      max_regression: 5         # 最大吞吐量回归(%)
+      
+  cuda_profiling:
+    enabled: true
+    script: "profile/scripts/cuda_kernel_profiler.py"
+    comparison_mode: true
+    
+  nsys_profiling:
+    enabled: false  # 可选，expensive操作
+    script: "profile/scripts/nsys_snn_profiling.py"
+    output_dir: "ci/results/latest/nsys"
+
+# L4层配置：深度验证
+L4_deep:
+  stability_tests:
+    iterations: 1000
+    batch_sizes: [1, 16, 64]
+    memory_check_interval: 100
+    
+  memory_leak_detection:
+    enabled: true
+    monitoring_duration: 3600  # 1小时
+    memory_growth_threshold: 10  # MB
+    
+  stress_tests:
+    concurrent_workers: 4
+    test_duration: 1800  # 30分钟
+    failure_threshold: 0.01  # 1%失败率阈值
+
+# 结果报告配置
+reporting:
+  output_dir: "ci/results"
+  formats: ["json", "html", "png"]
+  
+  metrics_tracked:
+    - "model_accuracy"
+    - "inference_time" 
+    - "memory_usage"
+    - "gpu_utilization"
+    - "kernel_performance"
+    
+  notification:
+    enabled: false
+    webhook_url: ""  # 可配置Slack/Teams通知
+    
+  retention:
+    keep_latest: 10
+    keep_baselines: true
+    cleanup_days: 30
+
+# 基线管理配置
+baseline_management:
+  auto_update: false  # 手动控制基线更新
+  storage_path: "ci/baselines"
+  version_control: true
+  
+  baseline_types:
+    - "model_accuracy"
+    - "performance_metrics"
+    - "memory_profiles"
+    - "cuda_kernel_metrics"
+    
+  update_triggers:
+    - "major_release"
+    - "performance_improvement"
+    - "manual_request"

@@ -68,17 +68,12 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
 
         cls._cuda_source = cuda_code
 
-        # -------- 2. 编译 RawModule ------------------------------------
-        #   * `max_registers 128` 让编译器在寄存器和 occupancy 之间取平衡
-        #   * `--use_fast_math` 同时确保 exp/log/sqrt 等有快速实现
-        #   * 针对不同 COMPILE_ARCH 自动设置 `-arch=sm_xx`
         compute_capability = torch.cuda.get_device_capability()
         arch_flag = f"-arch=sm_{compute_capability[0]}{compute_capability[1]}"
 
         cls._module = cp.RawModule(
             code=cuda_code,
             name_expressions=[
-                # 三种精度 * 两个方向，一共 6 个核函数
                 "forward_kernel_fp16", "backward_kernel_fp16",
                 "forward_kernel_fp32", "backward_kernel_fp32",
                 "forward_kernel_fp64", "backward_kernel_fp64",
@@ -89,13 +84,10 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
             ),
         )
 
-        # -------- 3. 取出函数对象 --------------------------------------
         for name in cls._module.name_expressions:
             cls._kernels[name] = cls._module.get_function(name)
 
-    # ------------------------------------------------------------------
-    # ③ 前向传播
-    # ------------------------------------------------------------------
+
     @staticmethod
     def forward(  # type: ignore[override]
         ctx,

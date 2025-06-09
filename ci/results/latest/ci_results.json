@@ -1,0 +1,42 @@
+{
+  "timestamp": "2025-06-09T16:09:10.134737",
+  "git_commit": {
+    "commit": "b2f8072cae4972349c734265ab28cbbd842b675e",
+    "branch": "ci-infrastructure"
+  },
+  "stages": {
+    "环境检查": {
+      "success": true,
+      "execution_time": 0.9158926010131836,
+      "returncode": 0,
+      "stdout": "Python 3.12.2\nPyTorch: 2.7.0+cu126\n",
+      "stderr": "",
+      "required": true,
+      "command": "python --version && python -c 'import torch; print(f\"PyTorch: {torch.__version__}\")'"
+    },
+    "快速验证": {
+      "success": true,
+      "execution_time": 15.692675828933716,
+      "returncode": 0,
+      "stdout": "\u001b[0;34m[INFO]\u001b[0m 启动ST-BIF快速验证 (L0级别)\n\u001b[0;34m[INFO]\u001b[0m 项目根目录: /home/zilingwei/Projects/ST-BIF_Profiling\n\u001b[0;34m[INFO]\u001b[0m === 环境检查 ===\n\u001b[0;34m[INFO]\u001b[0m 运行检查: python_env\n\u001b[0;32m[PASS]\u001b[0m python_env\n\u001b[0;34m[INFO]\u001b[0m 运行检查: cuda_check\n\u001b[0;32m[PASS]\u001b[0m cuda_check\n\u001b[0;34m[INFO]\u001b[0m === 导入测试 ===\n\u001b[0;34m[INFO]\u001b[0m 运行检查: import_snn\n\u001b[0;32m[PASS]\u001b[0m import_snn\n\u001b[0;34m[INFO]\u001b[0m 运行检查: import_models\n\u001b[0;32m[PASS]\u001b[0m import_models\n\u001b[0;34m[INFO]\u001b[0m 运行检查: import_wrapper\n\u001b[0;32m[PASS]\u001b[0m import_wrapper\n\u001b[0;34m[INFO]\u001b[0m 运行检查: import_utils\n\u001b[0;32m[PASS]\u001b[0m import_utils\n\u001b[0;34m[INFO]\u001b[0m 运行检查: import_cuda_operator\n\u001b[0;32m[PASS]\u001b[0m import_cuda_operator\n\u001b[0;34m[INFO]\u001b[0m === 代码质量检查 ===\n\u001b[0;34m[INFO]\u001b[0m 运行检查: syntax_check\n\u001b[0;32m[PASS]\u001b[0m syntax_check\n\u001b[0;34m[INFO]\u001b[0m === 基础功能测试 ===\n\u001b[0;34m[INFO]\u001b[0m 运行检查: model_loading\n\u001b[0;32m[PASS]\u001b[0m model_loading\n\u001b[0;34m[INFO]\u001b[0m 运行检查: snn_wrapper_basic\n\u001b[0;32m[PASS]\u001b[0m snn_wrapper_basic\n\u001b[0;34m[INFO]\u001b[0m === CUDA算子快速测试 ===\n\u001b[0;34m[INFO]\u001b[0m 运行检查: cuda_operator_import\n\u001b[0;32m[PASS]\u001b[0m cuda_operator_import\n\u001b[0;34m[INFO]\u001b[0m === 验证结果汇总 ===\n\n=================================\n\u001b[0;32m[PASS]\u001b[0m 快速验证通过！\n\u001b[0;32m[PASS]\u001b[0m 检查通过: 11/11\n\u001b[0;32m[PASS]\u001b[0m 耗时: 15秒\n",
+      "stderr": "",
+      "required": true,
+      "command": "./ci/scripts/quick_validate.sh"
+    },
+    "基础导入测试": {
+      "success": true,
+      "execution_time": 1.8461878299713135,
+      "returncode": 0,
+      "stdout": "核心模块导入成功\n",
+      "stderr": "",
+      "required": true,
+      "command": "python -c 'from snn import ST_BIFNeuron_MS; from models import resnet; print(\"核心模块导入成功\")'"
+    }
+  },
+  "summary": {
+    "total_stages": 3,
+    "passed_stages": 3,
+    "failed_stages": 0,
+    "overall_success": true
+  }
+}

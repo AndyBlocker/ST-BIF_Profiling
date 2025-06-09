@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "<string>", line 17, in <module>
+  File "/home/zilingwei/miniconda3/lib/python3.12/site-packages/torch/autograd/function.py", line 575, in apply
+    return super().apply(*args, **kwargs)  # type: ignore[misc]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/zilingwei/Projects/ST-BIF_Profiling/neuron_cupy/cuda_operator.py", line 133, in forward
+    T_max_cp = cp.from_dlpack(to_dlpack(T_max.contiguous()))
+                                        ^^^^^^^^^^^^^^^^
+AttributeError: 'int' object has no attribute 'contiguous'

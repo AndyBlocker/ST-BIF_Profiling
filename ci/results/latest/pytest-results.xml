@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="9" skipped="0" tests="19" time="0.676" timestamp="2025-06-09T17:44:25.340891+08:00" hostname="Lithium"><testcase classname="tests.test_cuda_kernels.TestCUDAKernelEquivalence" name="test_forward_equivalence_original_vs_new[shape0-fp32]" time="0.367" /><testcase classname="tests.test_cuda_kernels.TestCUDAKernelEquivalence" name="test_forward_equivalence_original_vs_new[shape0-fp16]" time="0.007" /><testcase classname="tests.test_cuda_kernels.TestCUDAKernelEquivalence" name="test_forward_equivalence_original_vs_new[shape1-fp32]" time="0.001" /><testcase classname="tests.test_cuda_kernels.TestCUDAKernelEquivalence" name="test_forward_equivalence_original_vs_new[shape1-fp16]" time="0.001" /><testcase classname="tests.test_cuda_kernels.TestCUDAKernelEquivalence" name="test_forward_equivalence_original_vs_new[shape2-fp32]" time="0.001" /><testcase classname="tests.test_cuda_kernels.TestCUDAKernelEquivalence" name="test_forward_equivalence_original_vs_new[shape2-fp16]" time="0.001" /><testcase classname="tests.test_cuda_kernels.TestCUDAKernelEquivalence" name="test_backward_equivalence_original_vs_new[shape0-fp32]" time="0.006" /><testcase classname="tests.test_cuda_kernels.TestCUDAKernelEquivalence" name="test_backward_equivalence_original_vs_new[shape1-fp32]" time="0.002" /><testcase classname="tests.test_cuda_kernels.TestCUDAKernelEquivalence" name="test_cuda_vs_pytorch_reference[fp32]" time="0.001" /><testcase classname="tests.test_cuda_kernels.TestCUDAKernelRegression" name="test_basic_functionality_regression" time="0.001" /><testcase classname="tests.test_cuda_kernels.TestCUDAKernelRegression" name="test_different_dimensions_regression[32-1]" time="0.036"><failure message="AssertionError: assert torch.Size([8, 1, 32]) == (1, 32)&#10;  &#10;  At index 0 diff: 8 != 1&#10;  Left contains one more item: 32&#10;  &#10;  Full diff:&#10;  + torch.Size([8, 1, 32])&#10;  - (...&#10;  &#10;  ...Full output truncated (3 lines hidden), use '-vv' to show">tests/test_cuda_kernels.py:331: in test_different_dimensions_regression
+    assert T.shape == (batch_size, features)
+E   AssertionError: assert torch.Size([8, 1, 32]) == (1, 32)
+E     
+E     At index 0 diff: 8 != 1
+E     Left contains one more item: 32
+E     
+E     Full diff:
+E     + torch.Size([8, 1, 32])
+E     - (...
+E     
+E     ...Full output truncated (3 lines hidden), use '-vv' to show</failure></testcase><testcase classname="tests.test_cuda_kernels.TestCUDAKernelRegression" name="test_different_dimensions_regression[32-8]" time="0.008"><failure message="AssertionError: assert torch.Size([8, 8, 32]) == (8, 32)&#10;  &#10;  At index 1 diff: 8 != 32&#10;  Left contains one more item: 32&#10;  &#10;  Full diff:&#10;  + torch.Size([8, 8, 32])&#10;  - (...&#10;  &#10;  ...Full output truncated (3 lines hidden), use '-vv' to show">tests/test_cuda_kernels.py:331: in test_different_dimensions_regression
+    assert T.shape == (batch_size, features)
+E   AssertionError: assert torch.Size([8, 8, 32]) == (8, 32)
+E     
+E     At index 1 diff: 8 != 32
+E     Left contains one more item: 32
+E     
+E     Full diff:
+E     + torch.Size([8, 8, 32])
+E     - (...
+E     
+E     ...Full output truncated (3 lines hidden), use '-vv' to show</failure></testcase><testcase classname="tests.test_cuda_kernels.TestCUDAKernelRegression" name="test_different_dimensions_regression[32-32]" time="0.006"><failure message="AssertionError: assert torch.Size([8, 32, 32]) == (32, 32)&#10;  &#10;  At index 0 diff: 8 != 32&#10;  Left contains one more item: 32&#10;  &#10;  Full diff:&#10;  + torch.Size([8, 32, 32])&#10;  - (...&#10;  &#10;  ...Full output truncated (3 lines hidden), use '-vv' to show">tests/test_cuda_kernels.py:331: in test_different_dimensions_regression
+    assert T.shape == (batch_size, features)
+E   AssertionError: assert torch.Size([8, 32, 32]) == (32, 32)
+E     
+E     At index 0 diff: 8 != 32
+E     Left contains one more item: 32
+E     
+E     Full diff:
+E     + torch.Size([8, 32, 32])
+E     - (...
+E     
+E     ...Full output truncated (3 lines hidden), use '-vv' to show</failure></testcase><testcase classname="tests.test_cuda_kernels.TestCUDAKernelRegression" name="test_different_dimensions_regression[64-1]" time="0.010"><failure message="AssertionError: assert torch.Size([8, 1, 64]) == (1, 64)&#10;  &#10;  At index 0 diff: 8 != 1&#10;  Left contains one more item: 64&#10;  &#10;  Full diff:&#10;  + torch.Size([8, 1, 64])&#10;  - (...&#10;  &#10;  ...Full output truncated (3 lines hidden), use '-vv' to show">tests/test_cuda_kernels.py:331: in test_different_dimensions_regression
+    assert T.shape == (batch_size, features)
+E   AssertionError: assert torch.Size([8, 1, 64]) == (1, 64)
+E     
+E     At index 0 diff: 8 != 1
+E     Left contains one more item: 64
+E     
+E     Full diff:
+E     + torch.Size([8, 1, 64])
+E     - (...
+E     
+E     ...Full output truncated (3 lines hidden), use '-vv' to show</failure></testcase><testcase classname="tests.test_cuda_kernels.TestCUDAKernelRegression" name="test_different_dimensions_regression[64-8]" time="0.006"><failure message="AssertionError: assert torch.Size([8, 8, 64]) == (8, 64)&#10;  &#10;  At index 1 diff: 8 != 64&#10;  Left contains one more item: 64&#10;  &#10;  Full diff:&#10;  + torch.Size([8, 8, 64])&#10;  - (...&#10;  &#10;  ...Full output truncated (3 lines hidden), use '-vv' to show">tests/test_cuda_kernels.py:331: in test_different_dimensions_regression
+    assert T.shape == (batch_size, features)
+E   AssertionError: assert torch.Size([8, 8, 64]) == (8, 64)
+E     
+E     At index 1 diff: 8 != 64
+E     Left contains one more item: 64
+E     
+E     Full diff:
+E     + torch.Size([8, 8, 64])
+E     - (...
+E     
+E     ...Full output truncated (3 lines hidden), use '-vv' to show</failure></testcase><testcase classname="tests.test_cuda_kernels.TestCUDAKernelRegression" name="test_different_dimensions_regression[64-32]" time="0.006"><failure message="AssertionError: assert torch.Size([8, 32, 64]) == (32, 64)&#10;  &#10;  At index 0 diff: 8 != 32&#10;  Left contains one more item: 64&#10;  &#10;  Full diff:&#10;  + torch.Size([8, 32, 64])&#10;  - (...&#10;  &#10;  ...Full output truncated (3 lines hidden), use '-vv' to show">tests/test_cuda_kernels.py:331: in test_different_dimensions_regression
+    assert T.shape == (batch_size, features)
+E   AssertionError: assert torch.Size([8, 32, 64]) == (32, 64)
+E     
+E     At index 0 diff: 8 != 32
+E     Left contains one more item: 64
+E     
+E     Full diff:
+E     + torch.Size([8, 32, 64])
+E     - (...
+E     
+E     ...Full output truncated (3 lines hidden), use '-vv' to show</failure></testcase><testcase classname="tests.test_cuda_kernels.TestCUDAKernelRegression" name="test_different_dimensions_regression[128-1]" time="0.002"><failure message="AssertionError: assert torch.Size([8, 1, 128]) == (1, 128)&#10;  &#10;  At index 0 diff: 8 != 1&#10;  Left contains one more item: 128&#10;  &#10;  Full diff:&#10;  + torch.Size([8, 1, 128])&#10;  - (...&#10;  &#10;  ...Full output truncated (3 lines hidden), use '-vv' to show">tests/test_cuda_kernels.py:331: in test_different_dimensions_regression
+    assert T.shape == (batch_size, features)
+E   AssertionError: assert torch.Size([8, 1, 128]) == (1, 128)
+E     
+E     At index 0 diff: 8 != 1
+E     Left contains one more item: 128
+E     
+E     Full diff:
+E     + torch.Size([8, 1, 128])
+E     - (...
+E     
+E     ...Full output truncated (3 lines hidden), use '-vv' to show</failure></testcase><testcase classname="tests.test_cuda_kernels.TestCUDAKernelRegression" name="test_different_dimensions_regression[128-8]" time="0.006"><failure message="AssertionError: assert torch.Size([8, 8, 128]) == (8, 128)&#10;  &#10;  At index 1 diff: 8 != 128&#10;  Left contains one more item: 128&#10;  &#10;  Full diff:&#10;  + torch.Size([8, 8, 128])&#10;  - (...&#10;  &#10;  ...Full output truncated (3 lines hidden), use '-vv' to show">tests/test_cuda_kernels.py:331: in test_different_dimensions_regression
+    assert T.shape == (batch_size, features)
+E   AssertionError: assert torch.Size([8, 8, 128]) == (8, 128)
+E     
+E     At index 1 diff: 8 != 128
+E     Left contains one more item: 128
+E     
+E     Full diff:
+E     + torch.Size([8, 8, 128])
+E     - (...
+E     
+E     ...Full output truncated (3 lines hidden), use '-vv' to show</failure></testcase><testcase classname="tests.test_cuda_kernels.TestCUDAKernelRegression" name="test_different_dimensions_regression[128-32]" time="0.006"><failure message="AssertionError: assert torch.Size([8, 32, 128]) == (32, 128)&#10;  &#10;  At index 0 diff: 8 != 32&#10;  Left contains one more item: 128&#10;  &#10;  Full diff:&#10;  + torch.Size([8, 32, 128])&#10;  - (...&#10;  &#10;  ...Full output truncated (3 lines hidden), use '-vv' to show">tests/test_cuda_kernels.py:331: in test_different_dimensions_regression
+    assert T.shape == (batch_size, features)
+E   AssertionError: assert torch.Size([8, 32, 128]) == (32, 128)
+E     
+E     At index 0 diff: 8 != 32
+E     Left contains one more item: 128
+E     
+E     Full diff:
+E     + torch.Size([8, 32, 128])
+E     - (...
+E     
+E     ...Full output truncated (3 lines hidden), use '-vv' to show</failure></testcase></testsuite></testsuites>

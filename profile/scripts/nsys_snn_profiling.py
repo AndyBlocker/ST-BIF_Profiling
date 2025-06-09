@@ -3,7 +3,7 @@
 ST-BIF SNN – Nsight Systems NVTX profiling script
 -------------------------------------------------
 • 只在关键层打 NVTX：SNN_Inference_Session / SNN_Inference_Run_X / Model_Forward_Pass  
-• CUDA Graph 在 warm-up 时捕获并实例化，正式采样阶段只 replay → 首帧不再膨胀  
+• 使用标准PyTorch推理，无CUDA Graph优化，确保profiling准确性
 • 不再用 torch.cuda.Event 同步分段；精确时间让 Nsight 统计，脚本仅记录总用时  
 • 输入拷贝采用 pinned-memory + non_blocking=True，减少 H→D 等待  
 """
@@ -43,10 +43,7 @@ class NVTXSNNProfiler:
             }
         }
 
-        # CUDA Graph 对象
-        self._graph       = None
-        self._static_in   = None
-        self._static_out  = None
+        # 预分配缓冲区（避免动态分配）
         self._pinned_cpu  = None      # 用于 H→D 异步 copy
         self._T           = None
         self._B           = None
@@ -81,8 +78,8 @@ class NVTXSNNProfiler:
         x = (x * std) + mean
         return x
 
-    # -------------------------- CUDA Graph 构建 -------------------------
-    def _build_cuda_graph(self, example_batch: torch.Tensor):
+    # -------------------------- 预热和缓冲区准备 -------------------------
+    def _prepare_buffers(self, example_batch: torch.Tensor):
         torch.backends.cudnn.benchmark = True
 
         # ---------- 首次编码 ----------
@@ -97,22 +94,18 @@ class NVTXSNNProfiler:
         else:
             self._B = self.batch_size
 
+        # ---------- 预热推理 ----------
+        print("⇢ Warming up model ...")
         with torch.inference_mode():
-            _warm = self.snn_model.model(enc_gpu)
+            for _ in range(3):  # 多次预热确保稳定
+                self.snn_model._reset_all_states()
+                _ = self.snn_model.model(enc_gpu)
         torch.cuda.synchronize()
-
-        self._static_in  = torch.empty_like(enc_gpu, device='cuda')
-        self._static_out = torch.empty_like(_warm,  device='cuda')
 
         # ⭐ pinned buffer 形状与 encoded 一致
         self._pinned_cpu = torch.empty_like(enc_gpu, device='cpu', pin_memory=True)
-
-        print("⇢ Capturing CUDA Graph ...")
-        self._graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(self._graph), torch.inference_mode():
-            self._static_out.copy_(self.snn_model.model(self._static_in))
-        torch.cuda.synchronize()
-        print("✓ Graph captured\n")
+        
+        print("✓ Model warmed up\n")
 
 
 
@@ -121,26 +114,39 @@ class NVTXSNNProfiler:
     def snn_forward_nvtx(self, cpu_batch: torch.Tensor, run_idx: int):
         nvtx.range_push(f"SNN_Inference_Run_{run_idx}")
 
-        # -------- 1) CPU → GPU → 时间编码 ----------
+        # -------- 1) SNN 状态重置 ----------
+        nvtx.range_push("SNN_State_Reset")
+        self.snn_model._reset_all_states()
+        nvtx.range_pop()
+
+        # -------- 2) 输入处理 ----------
+        nvtx.range_push("Input_Processing")
+        
+        nvtx.range_push("CPU_to_GPU_Transfer")
+        gpu_batch = cpu_batch.cuda(non_blocking=True)
+        nvtx.range_pop()
+        
+        nvtx.range_push("Temporal_Encoding")
         enc_gpu = get_subtensors(
-            cpu_batch.cuda(non_blocking=True), 0.0, 0.0,
+            gpu_batch, 0.0, 0.0,
             sample_grain=self.snn_model.step,
             time_step   = self._T
         ).contiguous()
+        nvtx.range_pop()
 
         if enc_gpu.dim() == 5:                       # [T, B, C, H, W] → [T*B, C, H, W]
             enc_gpu = enc_gpu.view(self._T * self._B, *enc_gpu.shape[2:])
+        nvtx.range_pop()  # /Input_Processing
 
-        # -------- 2) 直接拷到 static_in (GPU→GPU) ----------
-        self._static_in.copy_(enc_gpu, non_blocking=True)
-
-        # -------- 3) Graph replay ----------
+        # -------- 3) 模型前向传播 ----------
         nvtx.range_push("Model_Forward_Pass")
-        self._graph.replay()                         # 异步
+        snn_output = self.snn_model.model(enc_gpu)
         nvtx.range_pop()                             # /Model_Forward_Pass
 
         # -------- 4) 输出处理 ----------
-        out = self._static_out.view(self._T, self._B, *self._static_out.shape[1:]).sum(dim=0)
+        nvtx.range_push("Output_Processing")
+        out = snn_output.view(self._T, self._B, *snn_output.shape[1:]).sum(dim=0)
+        nvtx.range_pop()  # /Output_Processing
 
         nvtx.range_pop()                             # /SNN_Inference_Run_X
         return out
@@ -155,10 +161,9 @@ class NVTXSNNProfiler:
         self.load_snn_model()
         warm_batch = self.create_input()
 
-        # warm-up (& build graph)
-        self.snn_model._reset_all_states()
+        # warm-up
         if self.device == 'cuda':
-            self._build_cuda_graph(warm_batch)
+            self._prepare_buffers(warm_batch)
         else:
             raise RuntimeError("CUDA required for this profiling script")
 

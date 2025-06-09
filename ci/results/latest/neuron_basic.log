@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "<string>", line 7, in <module>
+  File "/home/zilingwei/miniconda3/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/zilingwei/miniconda3/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/zilingwei/Projects/ST-BIF_Profiling/snn/neurons/st_bif_neurons.py", line 266, in forward
+    input = input.reshape(torch.Size([int((self.T)),N//int((self.T))]) + input.shape[1:])
+                                                    ~^^~~~~~~~~~~~~~
+ZeroDivisionError: integer division or modulo by zero

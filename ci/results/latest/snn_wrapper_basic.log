@@ -1,0 +1,7 @@
+=====================
+self.model_name resnet
+self.kwargs {'level': 8}
+self.T: 4
+self.level: 8
+self.step: 3
+SNN包装器初始化成功

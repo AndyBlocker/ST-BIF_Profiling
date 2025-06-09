@@ -1,0 +1,10 @@
+{
+    "timestamp": "2025-06-09T16:11:05+08:00",
+    "validation_level": "L0_quick",
+    "total_checks": 11,
+    "passed_checks": 11,
+    "failed_checks": 0,
+    "success_rate": 100.00,
+    "duration_seconds": 16,
+    "status": "PASS"
+}
