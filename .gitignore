@@ -16,3 +16,11 @@ output_*/
 
 # ST-BIF Profiling outputs (large files)
 profile/outputs/
+
+CLAUDE.md
+AGENTS.md
+
+.claude
+package.json
+package-lock.json
+node_modules/
