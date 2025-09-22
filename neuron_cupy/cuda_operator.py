@@ -30,6 +30,7 @@ class ST_BIFNodeATGF_MS_CUDA(torch.autograd.Function):
 
         # ① 相对于当前 .py 的固定位置
         here = Path(__file__).resolve().parent
+        candidates.append(here / "cuda_snn_kernels.cu")
         candidates.append(here / "neuron_cupy" / "cuda_snn_kernels.cu")
 
         # ② 开发者可通过环境变量覆盖

@@ -30,3 +30,6 @@ snn_profile_*
 # Temporary profiling files
 /tmp/nsys-report-*
 
+node_modules/
+package-lock.json
+package.json

@@ -1,230 +1,538 @@
-/*********************************************************************
- * cuda_snn_kernels_new.cu  ——  单文件实现 fp16/fp32/fp64 SNN BIF 节点
- *
- * ✔ 统一 grid‑stride 循环；✔ 常量寄存器；✔ 多精度模板；✔ 指令级优化
- *********************************************************************/
-#pragma fp_contract off
- #include <cuda_fp16.h>
-#include <cuda_runtime.h>
+// cuda_snn_kernels.cu
+#include <torch/extension.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAStream.h>
+#include <cuda_fp16.h>
+#include <vector>
+#include <limits>
 
-namespace {
-/* ------------------------------------------------------------------ *
- *  工具函数（device inline）
- * ------------------------------------------------------------------ */
-template <typename T>
-__device__ __forceinline__
-T zero() { return T(0); }
+#define CUDA_CHECK(cond)  \
+  do { cudaError_t _e = (cond); if (_e != cudaSuccess) { \
+    AT_ERROR("CUDA error ", static_cast<int>(_e), " : ", cudaGetErrorString(_e)); } } while (0)
 
 template <typename T>
-__device__ __forceinline__
-T one() { return T(1); }
+__device__ inline T one();
+template <> __device__ inline float  one<float>()  { return 1.0f; }
+template <> __device__ inline double one<double>() { return 1.0;  }
 
 template <typename T>
-__device__ __forceinline__
-T fast_exp(T x);
+__device__ inline T zero();
+template <> __device__ inline float  zero<float>()  { return 0.0f; }
+template <> __device__ inline double zero<double>() { return 0.0;  }
 
-template <>
-__device__ __forceinline__
-float fast_exp(float x) { return __expf(x); }
+// --- theta & dtheta（半精度在计算时升 float） ---
+__device__ inline float  theta_fp32(float x)   { return x > 0.f ? 1.f : 0.f; }
+__device__ inline float  thetaeq_fp32(float x) { return x >= 0.f ? 1.f : 0.f; }
+__device__ inline double theta_fp64(double x)  { return x > 0.0 ? 1.0 : 0.0; }
+__device__ inline double thetaeq_fp64(double x){ return x >= 0.0 ? 1.0 : 0.0; }
 
-template <>
-__device__ __forceinline__
-double fast_exp(double x) { return exp(x); }
-
-template <>
-__device__ __forceinline__
-__half fast_exp(__half x) { return hexp(x); }
-
-/* Θ(x) 与 Θ_eq(x) */
-template <typename T>
-__device__ __forceinline__
-T theta(T x) { return x > zero<T>() ? one<T>() : zero<T>(); }
-
-template <typename T>
-__device__ __forceinline__
-T theta_eq(T x) { return x >= zero<T>() ? one<T>() : zero<T>(); }
-
-/* 高斯近似反向梯度（σ = 0.405·Vthr） */
-template <typename T>
-__device__ __forceinline__
-T theta_backward(T x, T Vthr)
-{
-    const T sigma2 = static_cast<T>(0.405) * Vthr;
-    const T a = one<T>() / Vthr;
-    const T upper = -(x * x) / (static_cast<T>(2.0) * sigma2 * sigma2);
-    return a * fast_exp(upper);
+__device__ inline float dtheta_gauss_f32(float x, float Vthr, float S, float Smin, float Smax) {
+  float sigma = 0.405f * Vthr;
+  float a = 1.0f / fmaxf(Vthr, 1e-12f);
+  float u = -(x * x) / (2.0f * sigma * sigma);
+  return a * __expf(u);
+}
+__device__ inline double dtheta_gauss_f64(double x, double Vthr, double S, double Smin, double Smax) {
+  double sigma = 0.405 * Vthr;
+  double a = 1.0 / fmax(Vthr, 1e-18);
+  double u = -(x * x) / (2.0 * sigma * sigma);
+  return a * exp(u);
 }
 
-/* ------------------------------------------------------------------ *
- *  Forward kernel (grid‑stride, 无动态 shared mem)
- * ------------------------------------------------------------------ */
-template <typename T>
-__global__ void forward_kernel(
-    const T *__restrict__ x_seq,
-    const T *__restrict__ v_th,
-    const T *__restrict__ T_max,
-    const T *__restrict__ T_min,
-    const T *__restrict__ prefire,
-    /* out */ T *__restrict__ spike_seq,
-    T *__restrict__ v_out,
-    T *__restrict__ T_seq,
-    T *__restrict__ H_seq,
-    /* scalars */ int N, int Tlen, int feat_flat, int total_neuron)
+// ===================== Forward kernels =====================
+
+__global__ void forward_kernel_fp32(
+    const float* __restrict__ x_seq,
+    const float* __restrict__ v_th,
+    const float* __restrict__ T_max,
+    const float* __restrict__ T_min,
+    const float* __restrict__ prefire,
+    float* __restrict__ spike_seq_out, // [T+1, B*F]
+    float* __restrict__ v_out,         // [B*F]
+    float* __restrict__ T_seq_out,     // [T+1, B*F]
+    float* __restrict__ H_seq_out,     // [T+1, B*F]
+    int64_t time_steps, int64_t spatial)
 {
-    const int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    for (int idx = gid; idx < total_neuron; idx += blockDim.x * gridDim.x)
+    const int64_t stride = blockDim.x * gridDim.x;
+    for (int64_t idx = blockIdx.x * blockDim.x + threadIdx.x; idx < spatial; idx += stride)
     {
-        /* --------------------------------------
-         *  idx 对应 (n, f)；每次循环处理同一单元全部时间步
-         * ------------------------------------ */
-        const T Vthr = v_th[0];
-        const T Tmax = T_max[0];
-        const T Tmin = T_min[0];
-        const T pre  = prefire[0];
+        float v = (0.5f + prefire[0]) * v_th[0];
+        float T = 0.0f;
+        spike_seq_out[idx] = 0.0f;
+        T_seq_out[idx]     = 0.0f;
+        H_seq_out[idx]     = v;
 
-        T v = (static_cast<T>(0.5) + pre) * Vthr;
-        T Tcnt = zero<T>();
+        const float vthr = v_th[0];
+        const float tmax = T_max[0];
+        const float tmin = T_min[0];
+        const float pf_delta = (tmax > 0.f) ? (prefire[0] * vthr / tmax) : 0.f;
+        const int   max_pf_steps = (int)fminf(fmaxf(tmax, 0.f), (float)time_steps);
 
-        /* 将 t = 0 写入缓存 */
-        T_seq[idx] = Tcnt;
-        spike_seq[idx] = zero<T>();
-        H_seq[idx] = v;
+        for (int64_t t = 0; t < time_steps; ++t) {
+            const int64_t cur  = t * spatial + idx;
+            const int64_t next = (t + 1) * spatial + idx;
 
-        const int stride = total_neuron;
-        for (int t = 0; t < Tlen; ++t)
-        {
-            const int off    = t * stride + idx;
-            const int w_off  = (t + 1) * stride + idx;
+            v += x_seq[cur];
+            H_seq_out[next] = v;
 
-            v += __ldg(x_seq + off);
-            H_seq[w_off] = v;
+            float spike_pos = (v >= vthr && T < tmax) ? 1.f : 0.f;
+            float spike_neg = (v < 0.f   && T > tmin) ? -1.f : 0.f;
+            float spike     = spike_pos + spike_neg;
 
-            const bool pos_spk = (v >= Vthr) & (Tcnt < Tmax);
-            const bool neg_spk = (v < zero<T>()) & (Tcnt > Tmin);
+            // 无分支 prefire 前缀扣减
+            float pf_mask = (t < max_pf_steps) ? 1.f : 0.f;
+            v -= vthr * spike + pf_delta * pf_mask;
 
-            T spike = zero<T>();
-            if (pos_spk)      spike = one<T>();
-            else if (neg_spk) spike = -one<T>();
+            T += spike;
 
-            T prefire_rst = zero<T>();
-            if( t < static_cast<int>(Tmax))
-                prefire_rst = pre * Vthr / Tmax;
-
-            v -= Vthr * spike + prefire_rst;
-            Tcnt += spike;
-
-            spike_seq[w_off] = spike;
-            T_seq[w_off]     = Tcnt;
+            spike_seq_out[next] = spike;
+            T_seq_out[next]     = T;
         }
         v_out[idx] = v;
     }
 }
 
-/* ------------------------------------------------------------------ *
- *  Backward kernel
- * ------------------------------------------------------------------ */
-template <typename T>
-__global__ void backward_kernel(
-    const T *__restrict__ grad_spike,
-    const T *__restrict__ grad_v,
-    const T *__restrict__ grad_Tseq,
-    const T *__restrict__ spike_seq,
-    const T *__restrict__ T_seq,
-    const T *__restrict__ H_seq,
-    const T *__restrict__ v_th,
-    const T *__restrict__ T_max,
-    const T *__restrict__ T_min,
-    /* out */ T *__restrict__ grad_x,
-    /* scalars */ int N, int Tlen, int feat_flat, int total_neuron)
+__global__ void forward_kernel_fp16(
+    const __half* __restrict__ x_seq,
+    const __half* __restrict__ v_th,
+    const __half* __restrict__ T_max,
+    const __half* __restrict__ T_min,
+    const __half* __restrict__ prefire,
+    __half* __restrict__ spike_seq_out,
+    __half* __restrict__ v_out,
+    __half* __restrict__ T_seq_out,
+    __half* __restrict__ H_seq_out,
+    int64_t time_steps, int64_t spatial)
 {
-    const int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    for (int idx = gid; idx < total_neuron; idx += blockDim.x * gridDim.x)
+    const int64_t stride = blockDim.x * gridDim.x;
+    for (int64_t idx = blockIdx.x * blockDim.x + threadIdx.x; idx < spatial; idx += stride)
     {
-        const T Vthr = v_th[0];
-        const T Tmax = T_max[0];
-        const T Tmin = T_min[0];
+        float vthr = __half2float(v_th[0]);
+        float tmax = __half2float(T_max[0]);
+        float tmin = __half2float(T_min[0]);
+        float pf   = __half2float(prefire[0]);
+        float v = (0.5f + pf) * vthr;
+        float T = 0.0f;
 
-        const int stride = total_neuron;
+        spike_seq_out[idx] = __float2half(0.0f);
+        T_seq_out[idx]     = __float2half(0.0f);
+        H_seq_out[idx]     = __float2half(v);
 
-        T gV = zero<T>();
-        T gT = zero<T>();
+        const float pf_delta = (tmax > 0.f) ? (pf * vthr / tmax) : 0.f;
+        const int   max_pf_steps = (int)fminf(fmaxf(tmax, 0.f), (float)time_steps);
 
-        for (int t = Tlen; t >= 1; --t)
-        {
-            const int cur_off = t * stride + idx;
-            const int pre_off = (t - 1) * stride + idx;
+        for (int64_t t = 0; t < time_steps; ++t) {
+            const int64_t cur  = t * spatial + idx;
+            const int64_t next = (t + 1) * spatial + idx;
 
-            const T H_t     = __ldg(H_seq + cur_off);
-            const T T_prev  = __ldg(T_seq + pre_off);
-            const T gY_t    = __ldg(grad_spike + pre_off);
+            v += __half2float(x_seq[cur]);
+            H_seq_out[next] = __float2half(v);
 
-            const T H_minus = H_t - Vthr;
-            const T Tmax_mT = Tmax - T_prev;
-            const T Tminus  = T_prev - Tmin;
+            float spike = 0.f;
+            if (v >= vthr && T < tmax)      spike = 1.f;
+            else if (v < 0.f && T > tmin)   spike = -1.f;
 
-            const T dYdH =   theta_backward(H_minus, Vthr) * theta(Tmax_mT)
-                           + theta_backward(-H_t, Vthr)    * theta(Tminus);
+            float pf_mask = (t < max_pf_steps) ? 1.f : 0.f;
+            v -= vthr * spike + pf_delta * pf_mask;
 
-            const T dYdTprev = - ( theta_eq(H_minus) * theta_backward(Tmax_mT, one<T>())
-                                 + theta(-H_t)       * theta_backward(Tminus,  one<T>()) );
+            T += spike;
 
-            const T common = gY_t - Vthr * gV + gT;
+            spike_seq_out[next] = __float2half(spike);
+            T_seq_out[next]     = __float2half(T);
+        }
+        v_out[idx] = __float2half(v);
+    }
+}
 
-            T gX = common * dYdH + gV;
-            gT   = common * dYdTprev + gT;
-            gV   = gX;
+__global__ void forward_kernel_fp64(
+    const double* __restrict__ x_seq,
+    const double* __restrict__ v_th,
+    const double* __restrict__ T_max,
+    const double* __restrict__ T_min,
+    const double* __restrict__ prefire,
+    double* __restrict__ spike_seq_out,
+    double* __restrict__ v_out,
+    double* __restrict__ T_seq_out,
+    double* __restrict__ H_seq_out,
+    int64_t time_steps, int64_t spatial)
+{
+    const int64_t stride = blockDim.x * gridDim.x;
+    for (int64_t idx = blockIdx.x * blockDim.x + threadIdx.x; idx < spatial; idx += stride)
+    {
+        const double vthr = v_th[0];
+        const double tmax = T_max[0];
+        const double tmin = T_min[0];
+        const double pf   = prefire[0];
+        double v = (0.5 + pf) * vthr;
+        double T = 0.0;
 
-            grad_x[pre_off] = gX;
+        spike_seq_out[idx] = 0.0;
+        T_seq_out[idx]     = 0.0;
+        H_seq_out[idx]     = v;
+
+        const double pf_delta = (tmax > 0.0) ? (pf * vthr / tmax) : 0.0;
+        const int64_t max_pf_steps = (int64_t)llrint(fmin(fmax(tmax, 0.0), (double)time_steps));
+
+        for (int64_t t = 0; t < time_steps; ++t) {
+            const int64_t cur  = t * spatial + idx;
+            const int64_t next = (t + 1) * spatial + idx;
+
+            v += x_seq[cur];
+            H_seq_out[next] = v;
+
+            double spike = 0.0;
+            if (v >= vthr && T < tmax)      spike = 1.0;
+            else if (v < 0.0 && T > tmin)   spike = -1.0;
+
+            double pf_mask = (t < max_pf_steps) ? 1.0 : 0.0;
+            v -= vthr * spike + pf_delta * pf_mask;
+
+            T += spike;
+
+            spike_seq_out[next] = spike;
+            T_seq_out[next]     = T;
+        }
+        v_out[idx] = v;
+    }
+}
+
+// ===================== Backward kernels =====================
+
+__global__ void backward_kernel_fp32(
+    const float* __restrict__ grad_spike_seq, // [T,   B*F]
+    const float* __restrict__ grad_v,         // [B*F]
+    const float* __restrict__ grad_T_seq,     // [T,   B*F] (未用：保持接口)
+    const float* __restrict__ spike_seq,      // [T+1, B*F]
+    const float* __restrict__ T_seq,          // [T+1, B*F]
+    const float* __restrict__ H_seq,          // [T+1, B*F]
+    const float* __restrict__ v_th,
+    const float* __restrict__ T_max,
+    const float* __restrict__ T_min,
+    float* __restrict__ grad_x_seq,           // [T,   B*F]
+    int64_t time_steps, int64_t spatial)
+{
+    const float vthr = v_th[0];
+    const float tmax = T_max[0];
+    const float tmin = T_min[0];
+
+    const int64_t stride = blockDim.x * gridDim.x;
+    for (int64_t idx = blockIdx.x * blockDim.x + threadIdx.x; idx < spatial; idx += stride)
+    {
+        float gV = grad_v[idx];
+        float gT = 0.0f;
+
+        for (int64_t t = time_steps; t >= 1; --t) {
+            const int64_t cur   = t * spatial + idx;       // H_t, T_t
+            const int64_t prev  = (t - 1) * spatial + idx; // T_{t-1}
+            const int64_t gout  = (t - 1) * spatial + idx; // grad_x[t-1]
+
+            const float H_t   = H_seq[cur];
+            const float T_t_1 = T_seq[prev];
+            const float gY_t  = grad_spike_seq[gout];
+
+            // dH/dX 与 dY/dT 的局部项（Gaussian surrogate）
+            float dHdX = dtheta_gauss_f32(H_t - vthr, vthr, T_t_1, tmin, tmax) * theta_fp32(tmax - T_t_1)
+                       + dtheta_gauss_f32(-H_t,        vthr, T_t_1, tmin, tmax) * theta_fp32(T_t_1 - tmin);
+
+            float dYdT = -(thetaeq_fp32(H_t - vthr) * dtheta_gauss_f32(tmax - T_t_1, 1.0f, T_t_1, tmin, tmax)
+                         + theta_fp32(-H_t)          * dtheta_gauss_f32(T_t_1 - tmin, 1.0f, T_t_1, tmin, tmax));
+
+            // 线性递推（已转为无分支代数式）
+            float tmp  = gY_t - vthr * gV + gT;
+            float gX   = tmp * dHdX + gV;
+            gT         = tmp * dYdT + gT;
+            gV         = gX;
+
+            grad_x_seq[gout] = gX;
         }
     }
 }
 
-/* ------------------------------------------------------------------ *
- *  显式实例化  (fp16 / fp32 / fp64)
- * ------------------------------------------------------------------ */
-extern "C" {
-
-// 1️⃣ fp16 -------------------------------------------------------------
-__global__ void forward_kernel_fp16(
-    const __half* x, const __half* vth, const __half* Tmax, const __half* Tmin, const __half* pre,
-    __half* spk, __half* vout, __half* Tseq, __half* Hseq,
-    int N, int T, int F, int total)
-{ forward_kernel(x, vth, Tmax, Tmin, pre, spk, vout, Tseq, Hseq, N, T, F, total); }
-
 __global__ void backward_kernel_fp16(
-    const __half* gspk, const __half* gv, const __half* gT,
-    const __half* spk, const __half* Tseq, const __half* Hseq,
-    const __half* vth, const __half* Tmax, const __half* Tmin,
-    __half* gx, int N, int T, int F, int total)
-{ backward_kernel(gspk, gv, gT, spk, Tseq, Hseq, vth, Tmax, Tmin, gx, N, T, F, total); }
+    const __half* __restrict__ grad_spike_seq,
+    const __half* __restrict__ grad_v,
+    const __half* __restrict__ grad_T_seq,
+    const __half* __restrict__ spike_seq,
+    const __half* __restrict__ T_seq,
+    const __half* __restrict__ H_seq,
+    const __half* __restrict__ v_th,
+    const __half* __restrict__ T_max,
+    const __half* __restrict__ T_min,
+    __half* __restrict__ grad_x_seq,
+    int64_t time_steps, int64_t spatial)
+{
+    const float vthr = __half2float(v_th[0]);
+    const float tmax = __half2float(T_max[0]);
+    const float tmin = __half2float(T_min[0]);
 
-// 2️⃣ fp32 -------------------------------------------------------------
-__global__ void forward_kernel_fp32(
-    const float* x, const float* vth, const float* Tmax, const float* Tmin, const float* pre,
-    float* spk, float* vout, float* Tseq, float* Hseq,
-    int N, int T, int F, int total)
-{ forward_kernel(x, vth, Tmax, Tmin, pre, spk, vout, Tseq, Hseq, N, T, F, total); }
+    const int64_t stride = blockDim.x * gridDim.x;
+    for (int64_t idx = blockIdx.x * blockDim.x + threadIdx.x; idx < spatial; idx += stride)
+    {
+        float gV = __half2float(grad_v[idx]);
+        float gT = 0.0f;
 
-__global__ void backward_kernel_fp32(
-    const float* gspk, const float* gv, const float* gT,
-    const float* spk, const float* Tseq, const float* Hseq,
-    const float* vth, const float* Tmax, const float* Tmin,
-    float* gx, int N, int T, int F, int total)
-{ backward_kernel(gspk, gv, gT, spk, Tseq, Hseq, vth, Tmax, Tmin, gx, N, T, F, total); }
+        for (int64_t t = time_steps; t >= 1; --t) {
+            const int64_t cur   = t * spatial + idx;
+            const int64_t prev  = (t - 1) * spatial + idx;
+            const int64_t gout  = (t - 1) * spatial + idx;
 
-// 3️⃣ fp64 -------------------------------------------------------------
-__global__ void forward_kernel_fp64(
-    const double* x, const double* vth, const double* Tmax, const double* Tmin, const double* pre,
-    double* spk, double* vout, double* Tseq, double* Hseq,
-    int N, int T, int F, int total)
-{ forward_kernel(x, vth, Tmax, Tmin, pre, spk, vout, Tseq, Hseq, N, T, F, total); }
+            float H_t   = __half2float(H_seq[cur]);
+            float T_t_1 = __half2float(T_seq[prev]);
+            float gY_t  = __half2float(grad_spike_seq[gout]);
+
+            float dHdX = dtheta_gauss_f32(H_t - vthr, vthr, T_t_1, tmin, tmax) * theta_fp32(tmax - T_t_1)
+                       + dtheta_gauss_f32(-H_t,        vthr, T_t_1, tmin, tmax) * theta_fp32(T_t_1 - tmin);
+
+            float dYdT = -(thetaeq_fp32(H_t - vthr) * dtheta_gauss_f32(tmax - T_t_1, 1.0f, T_t_1, tmin, tmax)
+                         + theta_fp32(-H_t)          * dtheta_gauss_f32(T_t_1 - tmin, 1.0f, T_t_1, tmin, tmax));
+
+            float tmp  = gY_t - vthr * gV + gT;
+            float gX   = tmp * dHdX + gV;
+            gT         = tmp * dYdT + gT;
+            gV         = gX;
+
+            grad_x_seq[gout] = __float2half(gX);
+        }
+    }
+}
 
 __global__ void backward_kernel_fp64(
-    const double* gspk, const double* gv, const double* gT,
-    const double* spk, const double* Tseq, const double* Hseq,
-    const double* vth, const double* Tmax, const double* Tmin,
-    double* gx, int N, int T, int F, int total)
-{ backward_kernel(gspk, gv, gT, spk, Tseq, Hseq, vth, Tmax, Tmin, gx, N, T, F, total); }
+    const double* __restrict__ grad_spike_seq,
+    const double* __restrict__ grad_v,
+    const double* __restrict__ grad_T_seq,
+    const double* __restrict__ spike_seq,
+    const double* __restrict__ T_seq,
+    const double* __restrict__ H_seq,
+    const double* __restrict__ v_th,
+    const double* __restrict__ T_max,
+    const double* __restrict__ T_min,
+    double* __restrict__ grad_x_seq,
+    int64_t time_steps, int64_t spatial)
+{
+    const double vthr = v_th[0];
+    const double tmax = T_max[0];
+    const double tmin = T_min[0];
 
-} // extern "C"
-} // anonymous namespace
+    const int64_t stride = blockDim.x * gridDim.x;
+    for (int64_t idx = blockIdx.x * blockDim.x + threadIdx.x; idx < spatial; idx += stride)
+    {
+        double gV = grad_v[idx];
+        double gT = 0.0;
+
+        for (int64_t t = time_steps; t >= 1; --t) {
+            const int64_t cur   = t * spatial + idx;
+            const int64_t prev  = (t - 1) * spatial + idx;
+            const int64_t gout  = (t - 1) * spatial + idx;
+
+            const double H_t   = H_seq[cur];
+            const double T_t_1 = T_seq[prev];
+            const double gY_t  = grad_spike_seq[gout];
+
+            double dHdX = dtheta_gauss_f64(H_t - vthr, vthr, T_t_1, tmin, tmax) * theta_fp64(tmax - T_t_1)
+                        + dtheta_gauss_f64(-H_t,        vthr, T_t_1, tmin, tmax) * theta_fp64(T_t_1 - tmin);
+
+            double dYdT = -(thetaeq_fp64(H_t - vthr) * dtheta_gauss_f64(tmax - T_t_1, 1.0, T_t_1, tmin, tmax)
+                          + theta_fp64(-H_t)          * dtheta_gauss_f64(T_t_1 - tmin, 1.0, T_t_1, tmin, tmax));
+
+            double tmp  = gY_t - vthr * gV + gT;
+            double gX   = tmp * dHdX + gV;
+            gT          = tmp * dYdT + gT;
+            gV          = gX;
+
+            grad_x_seq[gout] = gX;
+        }
+    }
+}
+
+// ===================== Host wrappers =====================
+
+static inline void check_inputs(const at::Tensor& x) {
+    TORCH_CHECK(x.is_cuda(), "Tensor must be CUDA");
+    TORCH_CHECK(x.is_contiguous(), "Tensor must be contiguous");
+}
+
+static inline std::tuple<int64_t,int64_t> get_time_and_spatial(const at::Tensor& x_seq) {
+    const int64_t T = x_seq.size(0);
+    // spatial = numel of one time-slice
+    const int64_t spatial = x_seq[0].numel();
+    return {T, spatial};
+}
+
+static inline std::vector<int64_t> make_out_sizes_Tp1(const at::Tensor& x_seq) {
+    auto sizes = x_seq.sizes().vec();
+    sizes[0] += 1; // T+1
+    return sizes;
+}
+
+static inline std::vector<int64_t> make_out_sizes_T(const at::Tensor& x_seq) {
+    auto sizes = x_seq.sizes().vec();
+    sizes[0] = x_seq.size(0); // T
+    return sizes;
+}
+
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+st_bif_forward_cuda(const at::Tensor& x_seq,
+                    const at::Tensor& v_th,
+                    const at::Tensor& T_max,
+                    const at::Tensor& T_min,
+                    const at::Tensor& prefire)
+{
+    check_inputs(x_seq);
+    check_inputs(v_th); check_inputs(T_max); check_inputs(T_min); check_inputs(prefire);
+
+    auto stream = at::cuda::getCurrentCUDAStream();
+    const auto dtype = x_seq.scalar_type();
+    const auto device = x_seq.device();
+
+    auto [T, spatial] = get_time_and_spatial(x_seq);
+    auto spike_all = at::empty(make_out_sizes_Tp1(x_seq), x_seq.options());
+    auto T_all     = at::empty_like(spike_all);
+    auto H_all     = at::empty_like(spike_all);
+    auto v_out     = at::empty(x_seq[0].sizes(), x_seq.options());
+
+    const int threads = 256;
+    const int sm = at::cuda::getCurrentDeviceProperties()->multiProcessorCount;
+    const int blocks = std::min<int64_t>( (spatial + threads - 1) / threads, sm * 8 );
+
+    if (dtype == at::kFloat) {
+        forward_kernel_fp32<<<blocks, threads, 0, stream>>>(
+            x_seq.data_ptr<float>(),
+            v_th.data_ptr<float>(),
+            T_max.data_ptr<float>(),
+            T_min.data_ptr<float>(),
+            prefire.data_ptr<float>(),
+            spike_all.data_ptr<float>(),
+            v_out.data_ptr<float>(),
+            T_all.data_ptr<float>(),
+            H_all.data_ptr<float>(),
+            T, spatial
+        );
+    } else if (dtype == at::kHalf) {
+        forward_kernel_fp16<<<blocks, threads, 0, stream>>>(
+            reinterpret_cast<const __half*>(x_seq.data_ptr<at::Half>()),
+            reinterpret_cast<const __half*>(v_th.data_ptr<at::Half>()),
+            reinterpret_cast<const __half*>(T_max.data_ptr<at::Half>()),
+            reinterpret_cast<const __half*>(T_min.data_ptr<at::Half>()),
+            reinterpret_cast<const __half*>(prefire.data_ptr<at::Half>()),
+            reinterpret_cast<__half*>(spike_all.data_ptr<at::Half>()),
+            reinterpret_cast<__half*>(v_out.data_ptr<at::Half>()),
+            reinterpret_cast<__half*>(T_all.data_ptr<at::Half>()),
+            reinterpret_cast<__half*>(H_all.data_ptr<at::Half>()),
+            T, spatial
+        );
+    } else if (dtype == at::kDouble) {
+        forward_kernel_fp64<<<blocks, threads, 0, stream>>>(
+            x_seq.data_ptr<double>(),
+            v_th.data_ptr<double>(),
+            T_max.data_ptr<double>(),
+            T_min.data_ptr<double>(),
+            prefire.data_ptr<double>(),
+            spike_all.data_ptr<double>(),
+            v_out.data_ptr<double>(),
+            T_all.data_ptr<double>(),
+            H_all.data_ptr<double>(),
+            T, spatial
+        );
+    } else {
+        TORCH_CHECK(false, "Unsupported dtype for forward");
+    }
+
+    CUDA_CHECK(cudaGetLastError());
+    return {spike_all, v_out, T_all, H_all};
+}
+
+at::Tensor
+st_bif_backward_cuda(const at::Tensor& grad_spike_seq,
+                     const at::Tensor& grad_v,
+                     const at::Tensor& grad_T_seq,
+                     const at::Tensor& spike_all,
+                     const at::Tensor& T_all,
+                     const at::Tensor& H_all,
+                     const at::Tensor& v_th,
+                     const at::Tensor& T_max,
+                     const at::Tensor& T_min)
+{
+    check_inputs(grad_spike_seq); check_inputs(grad_v); check_inputs(grad_T_seq);
+    check_inputs(spike_all); check_inputs(T_all); check_inputs(H_all);
+    check_inputs(v_th); check_inputs(T_max); check_inputs(T_min);
+
+    auto stream = at::cuda::getCurrentCUDAStream();
+    const auto dtype = grad_spike_seq.scalar_type();
+
+    // grad_x shape 与 grad_spike_seq 一致（T, B, ...)
+    auto grad_x = at::empty_like(grad_spike_seq);
+
+    auto [T, spatial] = get_time_and_spatial(spike_all) ; // spike_all 为 T+1
+    const int64_t time_steps = T - 1;
+
+    const int threads = 256;
+    const int sm = at::cuda::getCurrentDeviceProperties()->multiProcessorCount;
+    const int blocks = std::min<int64_t>( (spatial + threads - 1) / threads, sm * 8 );
+
+    if (dtype == at::kFloat) {
+        backward_kernel_fp32<<<blocks, threads, 0, stream>>>(
+            grad_spike_seq.data_ptr<float>(),
+            grad_v.data_ptr<float>(),
+            grad_T_seq.data_ptr<float>(),
+            spike_all.data_ptr<float>(),
+            T_all.data_ptr<float>(),
+            H_all.data_ptr<float>(),
+            v_th.data_ptr<float>(),
+            T_max.data_ptr<float>(),
+            T_min.data_ptr<float>(),
+            grad_x.data_ptr<float>(),
+            time_steps, spatial
+        );
+    } else if (dtype == at::kHalf) {
+        backward_kernel_fp16<<<blocks, threads, 0, stream>>>(
+            reinterpret_cast<const __half*>(grad_spike_seq.data_ptr<at::Half>()),
+            reinterpret_cast<const __half*>(grad_v.data_ptr<at::Half>()),
+            reinterpret_cast<const __half*>(grad_T_seq.data_ptr<at::Half>()),
+            reinterpret_cast<const __half*>(spike_all.data_ptr<at::Half>()),
+            reinterpret_cast<const __half*>(T_all.data_ptr<at::Half>()),
+            reinterpret_cast<const __half*>(H_all.data_ptr<at::Half>()),
+            reinterpret_cast<const __half*>(v_th.data_ptr<at::Half>()),
+            reinterpret_cast<const __half*>(T_max.data_ptr<at::Half>()),
+            reinterpret_cast<const __half*>(T_min.data_ptr<at::Half>()),
+            reinterpret_cast<__half*>(grad_x.data_ptr<at::Half>()),
+            time_steps, spatial
+        );
+    } else if (dtype == at::kDouble) {
+        backward_kernel_fp64<<<blocks, threads, 0, stream>>>(
+            grad_spike_seq.data_ptr<double>(),
+            grad_v.data_ptr<double>(),
+            grad_T_seq.data_ptr<double>(),
+            spike_all.data_ptr<double>(),
+            T_all.data_ptr<double>(),
+            H_all.data_ptr<double>(),
+            v_th.data_ptr<double>(),
+            T_max.data_ptr<double>(),
+            T_min.data_ptr<double>(),
+            grad_x.data_ptr<double>(),
+            time_steps, spatial
+        );
+    } else {
+        TORCH_CHECK(false, "Unsupported dtype for backward");
+    }
+
+    CUDA_CHECK(cudaGetLastError());
+    return grad_x;
+}
+
+// ===================== Registration =====================
+
+TORCH_LIBRARY(snn, m) {
+    m.def("st_bif_forward(Tensor x_seq, Tensor v_th, Tensor T_max, Tensor T_min, Tensor prefire)"
+         " -> (Tensor, Tensor, Tensor, Tensor)");
+    m.def("st_bif_backward(Tensor grad_spike_seq, Tensor grad_v, Tensor grad_T_seq,"
+         " Tensor spike_all, Tensor T_all, Tensor H_all, Tensor v_th, Tensor T_max, Tensor T_min)"
+         " -> Tensor");
+}
+
+TORCH_LIBRARY_IMPL(snn, CUDA, m) {
+    m.impl("st_bif_forward", st_bif_forward_cuda);
+    m.impl("st_bif_backward", st_bif_backward_cuda);
+}
+
+// 为了触发扩展模块装载（即便我们不暴露 pybind API）
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {}

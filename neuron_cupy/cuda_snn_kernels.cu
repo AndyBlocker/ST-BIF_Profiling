@@ -41,26 +41,26 @@ __device__ double theta_eq_fp64(double x) {
 // }
 
 __device__ float theta_backward_fp32(float x, float V_thr, float S, float S_min, float S_max) {
-    float mu = 0.0f;
     float sigma = 0.405f * V_thr;
-    float a = 1.0f/V_thr;
-    float upper_x = -(x - mu) * (x - mu) / (2.0f * sigma * sigma);
-    return a * exp(upper_x);
+    float a = 1.0f / V_thr;
+    float upper_x = -(x * x) / (2.0f * sigma * sigma);
+    return a * expf(upper_x);
 }
 
 __device__ __half theta_backward_fp16(__half x, __half V_thr, __half S, __half S_min, __half S_max) {
-    __half mu = __float2half(0.0f);
-    __half sigma = __hmul(__float2half(0.405f), V_thr);
-    __half a = __hdiv(__float2half(1.0f), V_thr);
-    __half upper_x = __hdiv(__hmul(__hneg(__hsub(x, mu)), __hsub(x, mu)), __hmul(__float2half(2.0f), __hmul(sigma, sigma)));
-    return __hmul(a, hexp(upper_x));
+    float x_f = __half2float(x);
+    float v_thr_f = __half2float(V_thr);
+    float sigma = 0.405f * v_thr_f;
+    float a = 1.0f / v_thr_f;
+    float upper_x = -(x_f * x_f) / (2.0f * sigma * sigma);
+    float grad = a * expf(upper_x);
+    return __float2half(grad);
 }
 
 __device__ double theta_backward_fp64(double x, double V_thr, double S, double S_min, double S_max) {
-    double mu = 0.0;
     double sigma = 0.405 * V_thr;
-    double a = 1.0/V_thr;
-    double upper_x = -(x - mu) * (x - mu) / (2.0 * sigma * sigma);
+    double a = 1.0 / V_thr;
+    double upper_x = -(x * x) / (2.0 * sigma * sigma);
     return a * exp(upper_x);
 }
 
@@ -242,38 +242,32 @@ __global__ void backward_kernel_fp16(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= batch_size * features) return;
     
-    __half grad_V = __float2half(0.0f);
-    __half grad_T = __float2half(0.0f);
+    float v_thr_f = __half2float(v_th[0]);
+    float T_max_f = __half2float(T_max[0]);
+    float T_min_f = __half2float(T_min[0]);
+
+    float grad_V = 0.0f;
+    float grad_T = 0.0f;
     
     for (int t = time_steps; t >= 1; t--) {
         int current_idx = (t * batch_size * features) + idx;
         int prev_idx = ((t-1) * batch_size * features) + idx;
         
-        __half H_t = H_seq[current_idx];
-        __half T_t_1 = T_seq[prev_idx];
-        __half grad_Y_t = grad_spike_seq[current_idx - batch_size * features];
-        
-        __half grad_T_t_to_H_t = __hadd(__hmul(theta_backward_fp16(__hsub(H_t, v_th[0]),v_th[0], T_t_1, T_min[0], T_max[0]), theta_fp16(__hsub(T_max[0], T_t_1))), \
-                                        __hmul(theta_backward_fp16(__hneg(H_t),v_th[0], T_t_1, T_min[0], T_max[0]), theta_fp16(__hsub(T_t_1, T_min[0]))));
+        float H_t = __half2float(H_seq[current_idx]);
+        float T_t_1 = __half2float(T_seq[prev_idx]);
+        float grad_Y_t = __half2float(grad_spike_seq[current_idx - batch_size * features]);
 
-        // __half grad_T_t_to_H_t_max1 = __hadd(__hmul(theta_backward_fp16(__hneg(v_th[0])), theta_fp16(__hsub(T_max[0], T_t_1))), \
-        //                                 __hmul(theta_backward_fp16(__float2half(0.0f)), theta_fp16(__hsub(T_t_1, T_min[0]))));
+        float grad_T_t_to_H_t = theta_backward_fp32(H_t - v_thr_f, v_thr_f, T_t_1, T_min_f, T_max_f) * theta_fp32(T_max_f - T_t_1) +
+                                theta_backward_fp32(-H_t, v_thr_f, T_t_1, T_min_f, T_max_f) * theta_fp32(T_t_1 - T_min_f);
 
-        // __half grad_T_t_to_H_t_max2 = __hadd(__hmul(theta_backward_fp16(__hmul(__float2half(0.5f), v_th[0])), theta_fp16(__hsub(T_max[0], T_t_1))), \
-        //                                 __hmul(theta_backward_fp16(__hneg(__hmul(__float2half(0.5f), v_th[0]))), theta_fp16(__hsub(T_t_1, T_min[0]))));
-        
-        // grad_T_t_to_H_t = __hdiv(grad_T_t_to_H_t, __hmax(grad_T_t_to_H_t_max1, grad_T_t_to_H_t_max2));
+        float grad_Y_t_to_T_t_1 = -(theta_eq_fp32(H_t - v_thr_f) * theta_backward_fp32(T_max_f - T_t_1, 1.0f, T_t_1, T_min_f, T_max_f) +
+                                    theta_fp32(-H_t) * theta_backward_fp32(T_t_1 - T_min_f, 1.0f, T_t_1, T_min_f, T_max_f));
 
-        __half grad_Y_t_to_T_t_1 = __hneg(__hadd(__hmul(theta_eq_fp16(__hsub(H_t, v_th[0])), theta_backward_fp16(__hsub(T_max[0], T_t_1),__float2half(1.0f), T_t_1, T_min[0], T_max[0])) ,\
-                                                 __hmul(theta_fp16(__hneg(H_t)), theta_backward_fp16(__hsub(T_t_1, T_min[0]),__float2half(1.0f), T_t_1, T_min[0], T_max[0]))));
-
-
-        __half grad_X = __hadd(__hmul(__hadd(__hsub(grad_Y_t,__hmul(v_th[0],grad_V)), grad_T),grad_T_t_to_H_t), grad_V);
-        grad_T = __hadd(__hmul(__hadd(__hsub(grad_Y_t,__hmul(v_th[0],grad_V)), grad_T),grad_Y_t_to_T_t_1), grad_T);
+        float grad_X = (grad_Y_t - v_thr_f * grad_V + grad_T) * grad_T_t_to_H_t + grad_V;
+        grad_T = (grad_Y_t - v_thr_f * grad_V + grad_T) * grad_Y_t_to_T_t_1 + grad_T;
         grad_V = grad_X;
 
-        // Store result
-        grad_x_seq[current_idx - batch_size * features] = grad_X;
+        grad_x_seq[current_idx - batch_size * features] = __float2half(grad_X);
     }
 }
 

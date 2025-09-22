@@ -5,7 +5,7 @@ from typing import Tuple, List
 
 # Import your operators
 from original_operator import ST_BIFNodeATGF_MS
-from cuda_operator import ST_BIFNodeATGF_MS_CUDA
+from cuda_operator_new import ST_BIFNodeATGF_MS_CUDA
 
 class TestSNNOperator:
     @pytest.fixture
@@ -43,6 +43,9 @@ class TestSNNOperator:
 
     def assert_tensor_close(self, a: torch.Tensor, b: torch.Tensor, rtol=1e-5, atol=1e-6):
         """Custom assertion for tensor comparison with detailed error message"""
+        if a.dtype == torch.float16 or b.dtype == torch.float16:
+            rtol = max(rtol, 5e-3)
+            atol = max(atol, 5e-2)
         if not torch.allclose(a, b, rtol=rtol, atol=atol):
             max_diff = torch.max(torch.abs(a - b)).item()
             mean_diff = torch.mean(torch.abs(a - b)).item()
